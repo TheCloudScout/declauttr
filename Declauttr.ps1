@@ -569,9 +569,11 @@ function Get-DeClauttRLogo {
     $assetDir   = Join-Path $PSScriptRoot '.assets'
     $titleLines = @()
     $broomLines = @()
+    $dustLines  = @()
     try {
         $titleLines = [System.IO.File]::ReadAllLines((Join-Path $assetDir 'declauttr-title.ascii'))
         $broomLines = [System.IO.File]::ReadAllLines((Join-Path $assetDir 'declauttr-broom.ascii'))
+        $dustLines  = [System.IO.File]::ReadAllLines((Join-Path $assetDir 'declauttr-dust.ascii'))
     } catch {
         # Degrade silently if the assets folder is missing.
     }
@@ -584,6 +586,11 @@ function Get-DeClauttRLogo {
     $taglineText  = 'BECAUSE NOT EVERY SESSION DESERVES A COMEBACK'
     $taglineRow   = 5
     $taglineColor = 'Yellow'
+
+    # Dust sits below the title and to the left of the broom head.
+    $dustStartRow = 13
+    $dustOffset   = 0
+    $dustColor    = 'DarkGray'
 
     $broomHeight   = $broomLines.Count
     $titleHeight   = $titleLines.Count
@@ -648,6 +655,22 @@ function Get-DeClauttRLogo {
                 if ($tagCh -ne ' ') {
                     $ch    = [string]$tagCh
                     $color = $taglineColor
+                }
+            }
+
+            # Dust drifting below the title, to the left of the broom.
+            if ($null -eq $ch -and -not $insideBroom) {
+                $dustRowIdx = $r - $dustStartRow
+                if ($dustRowIdx -ge 0 -and $dustRowIdx -lt $dustLines.Count) {
+                    $dustRow = $dustLines[$dustRowIdx]
+                    $dc = $col - $dustOffset
+                    if ($dc -ge 0 -and $dc -lt $dustRow.Length) {
+                        $d = $dustRow[$dc]
+                        if ($d -ne ' ') {
+                            $ch    = [string]$d
+                            $color = $dustColor
+                        }
+                    }
                 }
             }
 
