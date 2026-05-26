@@ -1,15 +1,19 @@
-# declauttr
+# DeClauttR
+
+![DeClauttR](.assets/about.jpg)
 
 A small PowerShell utility to **list and prune Claude Code sessions** that pile up
 under `~/.claude/projects/` and clutter the `claude --resume` picker.
 
 `/clear` inside a Claude session only wipes the in-memory context — it does
 **not** delete the on-disk transcript, so old sessions keep showing up in the
-resume list forever. `declauttr` lets you see what's there (with the same
+resume list forever. **DeClauttR** lets you see what's there (with the same
 titles Claude shows you in `--resume`) and bulk-delete the ones you don't
 want anymore.
 
 Cross-platform: works on **macOS, Linux, and Windows** under PowerShell 7+ (`pwsh`).
+
+![DeClauttR demo](.assets/declauttr.gif)
 
 ## Features
 
@@ -20,36 +24,43 @@ Cross-platform: works on **macOS, Linux, and Windows** under PowerShell 7+ (`pws
   - session **title** (custom title set via `/title`, or the AI-generated one)
   - first real user prompt, word-wrapped to the terminal width
 - Two display modes:
-  - **List mode** (default) — grouped per project, scroll-friendly text output.
-  - **Interactive mode** (`-Interactive`) — full-screen checkbox TUI with arrow-key
+  - **Interactive picker** (default) — full-screen checkbox TUI with arrow-key
     navigation, viewport scrolling, and a confirmation step before any file is touched.
+  - **List mode** (`-List`) — grouped per project, scroll-friendly text output.
 - **Auto-recommends** likely-disposable sessions and pre-checks them, including:
   - sessions with no real user message (empty/aborted starts)
   - sessions under 20 KB
   - one-word prompts like `resume`, `config`, `exit`, `help`, `init`
   - prompts shorter than 15 characters
+- **Highlights keepers in cyan**: sessions with a user-assigned custom title
+  (set via `/title`) are rendered in cyan and marked with a leading `!` to
+  flag the ones you most likely want to hold on to.
 - Safe by default: nothing is deleted without an explicit, case-sensitive `YES` confirmation.
 
 ## Requirements
 
-- PowerShell 7 or later (`pwsh`). The script does not run on Windows PowerShell 5.1.
-- A terminal that supports ANSI cursor positioning for the interactive picker
-  (Windows Terminal, iTerm2, macOS Terminal, most Linux terminals — all fine).
+- **PowerShell 7 or later** (also known as **PowerShell Core** / `pwsh`).
+  The script uses syntax and APIs that don't exist in the old Windows
+  PowerShell 5.1 that ships with Windows by default, so it **must** be run
+  under `pwsh`.
+  - Windows: install from the [PowerShell releases page](https://github.com/PowerShell/PowerShell/releases)
+    or via `winget install Microsoft.PowerShell`.
+  - macOS: `brew install --cask powershell`.
+  - Linux: see the [PowerShell install docs](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-linux).
+- A terminal that supports ANSI cursor positioning for the interactive
+  picker — Windows Terminal is the recommended choice on Windows. iTerm2,
+  macOS Terminal, and most Linux terminals also work fine.
 
 ## Install
 
-Clone the repo and (optionally) symlink the script into your `PATH`:
+Clone the repo:
 
-```bash
+```powershell
 git clone https://github.com/TheCloudScout/declauttr.git
 cd declauttr
-chmod +x Declauttr.ps1
-
-# optional: make it callable from anywhere as `declauttr`
-ln -s "$PWD/Declauttr.ps1" /usr/local/bin/declauttr
 ```
 
-Or just run it from wherever you cloned it:
+Run it from there:
 
 ```powershell
 pwsh ./Declauttr.ps1
@@ -57,30 +68,38 @@ pwsh ./Declauttr.ps1
 
 ### Optional: a shell alias
 
-Drop this in your `$PROFILE` (`pwsh -c 'code $PROFILE'`) so you can call it
-from any directory:
+Drop this into your PowerShell profile (`pwsh -c 'code $PROFILE'` to open it)
+so you can call `declauttr` from any directory:
 
 ```powershell
-function declauttr { & "$HOME/path/to/declauttr/Declauttr.ps1" @args }
+function declauttr { & "C:\path\to\declauttr\Declauttr.ps1" @args }
 ```
+
+(On macOS / Linux substitute the appropriate path, e.g.
+`"$HOME/declauttr/Declauttr.ps1"`.)
 
 ## Usage
 
-### List every session, grouped per project
+### Open the interactive picker (default)
 
 ```powershell
 ./Declauttr.ps1
 ```
 
+### List every session, grouped per project
+
+```powershell
+./Declauttr.ps1 -List
+```
+
 Output looks like:
 
 ```
-=== -Users-koos-Repos-Wortell-Usecases (7 sessions) ===
+=== -Users-koos-Repos-myrepo (7 sessions) ===
   2026-05-26 15:49  f870f835-0044-4439-b510-e0960748d4b1   2,139.0 KB
-     Heijmans SAP-Protect
-     I recently onboarded SAP logs for our customer Heijmans into Sentinel.
-     We're using SecurityBridge as an intermediary between SAP and Sentinel.
-     …
+     Refactor auth middleware
+     I want to refactor the auth middleware so that token validation happens
+     before the rate limiter instead of after, since invalid tokens are…
   2026-05-26 15:34  a09f73dc-e060-4a6b-b741-51100cb08a5b      17.2 KB
      (no user message found)
 ```
@@ -88,29 +107,35 @@ Output looks like:
 ### Filter to one project (substring match)
 
 ```powershell
-./Declauttr.ps1 -Project Wortell
+./Declauttr.ps1 -Project myrepo
 ```
 
 ### Interactive picker
 
-```powershell
-./Declauttr.ps1 -Interactive
-```
+The picker is the default. Pass `-List` if you want plain text output instead.
 
 | Key | Action |
 |---|---|
 | ↑ / ↓ | move cursor |
 | Home / End | jump to top / bottom |
 | PgUp / PgDn | page up / down |
-| **Space** | toggle the current row |
+| **Space** | open a preview overlay for the highlighted session — session details (project, UUID, title, timestamp, size) stay pinned at the top of the window while the message body scrolls. Drop-shadow renders the underlying picker text in dim grey, like a classic Turbo Vision dialog. Space/Esc to close, ↑↓/PgUp/PgDn to scroll. |
+| **X** | toggle the current row's checkbox |
 | **A** | toggle all (check all, or uncheck if everything was checked) |
 | **R** | re-apply the "recommended for removal" selection |
-| **Enter** | confirm — prints the list and waits for you to type `YES` |
+| **Del** / **Backspace** | open the delete-confirmation overlay for the checked rows. Type `yes` (case-insensitive) + Enter to commit, or Esc to back out. (On a MacBook without a numpad the "delete" key sends Backspace — both work here.) |
+| **?** | open the about / help overlay with the DeClauttR logo and an auto-scrolling blurb. Any key closes it. |
 | **Esc** / **Q** | cancel, nothing is touched |
 
-Rows marked with `!` in front of the checkbox and rendered in yellow are the
-ones declauttr recommends pruning. They start pre-checked, so for the common
-case you can just review and press **Enter**.
+Yellow rows are the ones DeClauttR recommends pruning. They start pre-checked,
+so for the common case you can just review and press **Enter**. Rows rendered
+in **cyan** with a leading `!` have a user-assigned custom title (set via
+`/title`) — DeClauttR treats those as likely keepers, so you can spot them at
+a glance and avoid deleting them by accident.
+
+When the session list doesn't fit on screen, a yellow `↑` appears at the
+top-left of the viewport if there are rows above it, and a yellow `↓` at
+the bottom-left if there are rows below.
 
 ### Tune the snippet length
 
@@ -138,7 +163,7 @@ Each Claude Code session is stored as a JSONL transcript at:
 The script streams each file with `[System.IO.File]::ReadLines`, fast-filters
 lines with `String.Contains`, and only parses the few entry types it needs:
 
-| Entry type | What declauttr uses it for |
+| Entry type | What DeClauttR uses it for |
 |---|---|
 | `user` | first real user message → snippet |
 | `ai-title` | last value seen → fallback title |
