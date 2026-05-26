@@ -1,6 +1,6 @@
 # DeClauttR
 
-![DeClauttR](.assets/about.jpg)
+![DeClauttR](.assets/about-social.jpg)
 
 A small PowerShell utility to **list and prune Claude Code sessions** that pile up
 under `~/.claude/projects/` and clutter the `claude --resume` picker.

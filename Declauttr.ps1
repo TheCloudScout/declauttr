@@ -589,7 +589,7 @@ function Get-DeClauttRLogo {
 
     # Dust sits below the title and to the left of the broom head.
     $dustStartRow = 13
-    $dustOffset   = 0
+    $dustOffset   = 11
     $dustColor    = 'DarkGray'
 
     $broomHeight   = $broomLines.Count
