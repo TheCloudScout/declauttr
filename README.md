@@ -1,6 +1,6 @@
 # DeClauttR
 
-![DeClauttR](.assets/about-social.jpg)
+![DeClauttR](img/about-social.jpg)
 
 A small PowerShell utility to **list and prune Claude Code sessions** that pile up
 under `~/.claude/projects/` and clutter the `claude --resume` picker.
@@ -13,7 +13,7 @@ want anymore.
 
 Cross-platform: works on **macOS, Linux, and Windows** under PowerShell 7+ (`pwsh`).
 
-![DeClauttR demo](.assets/declauttr.gif)
+![DeClauttR demo](img/declauttr.gif)
 
 ## Features
 
@@ -35,7 +35,7 @@ Cross-platform: works on **macOS, Linux, and Windows** under PowerShell 7+ (`pws
 - **Highlights keepers in cyan**: sessions with a user-assigned custom title
   (set via `/title`) are rendered in cyan and marked with a leading `!` to
   flag the ones you most likely want to hold on to.
-- Safe by default: nothing is deleted without an explicit, case-sensitive `YES` confirmation.
+- Safe by default: nothing is deleted without an explicit `yes` (case-insensitive) confirmation, and the picker stays open after a delete so you can keep pruning instead of being kicked back to the shell.
 
 ## Requirements
 
@@ -104,6 +104,16 @@ Output looks like:
      (no user message found)
 ```
 
+> **Project names use hyphens, not slashes.** Claude stores each session
+> under a directory whose name is the original working directory with
+> path separators (`/` on macOS/Linux, `\` on Windows) replaced by `-`.
+> So your checkout at `/Users/koos/Repos/myrepo` shows up as
+> `-Users-koos-Repos-myrepo` both here and in the interactive picker's
+> "Project" column. DeClauttR shows the name as Claude stored it rather
+> than trying to decode the hyphens — `-` is also a valid character in
+> folder names (`my-repo` would be indistinguishable from a path
+> boundary), so the raw encoded form is the only unambiguous one.
+
 ### Filter to one project (substring match)
 
 ```powershell
@@ -114,15 +124,18 @@ Output looks like:
 
 The picker is the default. Pass `-List` if you want plain text output instead.
 
+![Interactive picker — list view](img/screenshot-list-view.jpg)
+
 | Key | Action |
 |---|---|
 | ↑ / ↓ | move cursor |
 | Home / End | jump to top / bottom |
 | PgUp / PgDn | page up / down |
-| **Space** | open a preview overlay for the highlighted session — session details (project, UUID, title, timestamp, size) stay pinned at the top of the window while the message body scrolls. Drop-shadow renders the underlying picker text in dim grey, like a classic Turbo Vision dialog. Space/Esc to close, ↑↓/PgUp/PgDn to scroll. |
+| **Space** | open a preview overlay for the highlighted session — session details (project, UUID, title, timestamp, size) stay pinned at the top of the window while the message body scrolls. Drop-shadow renders the underlying picker text in dim grey, like a classic Turbo Vision dialog. Space/Esc to close, ↑↓/PgUp/PgDn to scroll. When a search filter is active (see **F** below), every occurrence of the search string is highlighted in the preview with a yellow background so you can scroll straight to the matches. |
 | **X** | toggle the current row's checkbox |
 | **A** | toggle all (check all, or uncheck if everything was checked) |
 | **R** | re-apply the "recommended for removal" selection |
+| **F** | toggle a content-search filter. A small prompt overlays the picker for a substring; press **Enter** to apply, and the list narrows to sessions whose `.jsonl` transcript contains that string anywhere (user prompts, assistant replies, titles). The match is case-insensitive by default — press **Tab** inside the prompt to flip the `[ ] Case-sensitive` checkbox before applying (the choice sticks across searches). Press **F** again on the picker to clear the filter and return to the full list. While filtered, the top status bar swaps "F filter" for a yellow "F clear filter: …" pill so you can't forget you're looking at a subset. |
 | **Del** / **Backspace** | open the delete-confirmation overlay for the checked rows. Type `yes` (case-insensitive) + Enter to commit, or Esc to back out. (On a MacBook without a numpad the "delete" key sends Backspace — both work here.) |
 | **?** | open the about / help overlay with the DeClauttR logo and an auto-scrolling blurb. Any key closes it. |
 | **Esc** / **Q** | cancel, nothing is touched |
@@ -136,6 +149,29 @@ a glance and avoid deleting them by accident.
 When the session list doesn't fit on screen, a yellow `↑` appears at the
 top-left of the viewport if there are rows above it, and a yellow `↓` at
 the bottom-left if there are rows below.
+
+#### Session preview (Space)
+
+![Session preview overlay](img/screenshot-session-preview.jpg)
+
+#### Content search (F)
+
+A small overlay takes the substring to filter on. **Tab** toggles the
+`[ ] Case-sensitive` checkbox, **Enter** applies, **Esc** cancels.
+
+![Search prompt](img/screenshot-search-string.jpg)
+
+When the filter is active the picker narrows to matching sessions and the
+status bar grows a yellow `F clear filter: …` pill so you don't forget
+you're looking at a subset. Pressing **Space** on a row inside a filtered
+view opens the preview with every match of your search string highlighted
+in yellow:
+
+![Filtered view with match highlighting](img/screenshot-filtered-view-and-highlighting.jpg)
+
+#### Delete confirmation (Del / Backspace)
+
+![Delete confirmation overlay](img/screenshot-confirm-delete.jpg)
 
 ### Tune the snippet length
 
@@ -180,8 +216,10 @@ disappear immediately.
 
 ## Safety
 
-- The interactive picker never deletes anything until you type `YES`
-  (case-sensitive) at the confirmation prompt.
+- The interactive picker never deletes anything until you type `yes`
+  (case-insensitive) at the confirmation prompt. After a successful delete
+  the picker simply removes those rows from the in-memory list and keeps
+  running, so you can prune more without re-launching.
 - The script never touches `~/.claude/projects/*/memory/` or any subdirectory
   that isn't a `.jsonl` file — your auto-memory store is left alone.
 - Output is read-only until the final confirmation step. Esc/Q at any point

@@ -14,14 +14,23 @@
       ↑/↓ Home/End PgUp/PgDn   navigate
       Space                    open a full-screen preview of the highlighted
                                session (session details pinned at top, body
-                               scrolls; Space/Esc closes)
+                               scrolls; Space/Esc closes). When a content
+                               filter is active, every match of the search
+                               string is highlighted with a yellow background.
       X                        toggle the current row's checkbox
       A                        toggle all rows
       R                        re-apply the "recommended for removal"
                                selection
+      F                        toggle a content-search filter — opens a
+                               prompt for a substring, then narrows the list
+                               to sessions whose transcript contains that
+                               string. Case-insensitive by default; press
+                               Tab inside the prompt to flip the
+                               case-sensitive checkbox. Press F again on the
+                               picker to clear the filter.
       Del / Backspace          open the delete-confirmation overlay for the
-                               checked rows; type YES + Enter to commit,
-                               Esc to back out
+                               checked rows; type yes (case-insensitive) +
+                               Enter to commit, Esc to back out
       ?                        about / help overlay (logo + auto-scrolling
                                description, any key to close)
       Esc / Q                  cancel and exit, nothing is touched
@@ -231,7 +240,9 @@ function Show-SessionPreview {
         [Parameter(Mandatory)] [int]$ScreenWidth,
         [Parameter(Mandatory)] [int]$ScreenHeight,
         [Parameter(Mandatory)] [int]$BaseTop,
-        [string[]]$BackgroundRows = @()
+        [string[]]$BackgroundRows = @(),
+        [string]$Query = '',
+        [bool]$CaseSensitive = $false
     )
 
     $boxW = $ScreenWidth - 6
@@ -273,6 +284,46 @@ function Show-SessionPreview {
         return [string]$c
     }
 
+    # Writes one row of content, highlighting any matches of $Query with a
+    # yellow background (black foreground) and padding the rest to $Width
+    # using the supplied $Fg/$Bg.
+    $cmp = if ($CaseSensitive) {
+        [System.StringComparison]::Ordinal
+    } else {
+        [System.StringComparison]::OrdinalIgnoreCase
+    }
+    $writeHighlighted = {
+        param([string]$Text, [int]$Width, [string]$Fg, [string]$Bg)
+        if ($Text.Length -gt $Width) { $Text = $Text.Substring(0, $Width) }
+        if (-not $Query) {
+            Write-Host $Text.PadRight($Width) -NoNewline -ForegroundColor $Fg -BackgroundColor $Bg
+            return
+        }
+        $pos     = 0
+        $written = 0
+        while ($pos -lt $Text.Length) {
+            $hit = $Text.IndexOf($Query, $pos, $cmp)
+            if ($hit -lt 0 -or ($hit + $Query.Length) -gt $Text.Length) {
+                $rest = $Text.Substring($pos)
+                Write-Host $rest -NoNewline -ForegroundColor $Fg -BackgroundColor $Bg
+                $written += $rest.Length
+                break
+            }
+            if ($hit -gt $pos) {
+                $pre = $Text.Substring($pos, $hit - $pos)
+                Write-Host $pre -NoNewline -ForegroundColor $Fg -BackgroundColor $Bg
+                $written += $pre.Length
+            }
+            $match = $Text.Substring($hit, $Query.Length)
+            Write-Host $match -NoNewline -ForegroundColor Black -BackgroundColor Yellow
+            $written += $match.Length
+            $pos = $hit + $Query.Length
+        }
+        if ($written -lt $Width) {
+            Write-Host (' ' * ($Width - $written)) -NoNewline -ForegroundColor $Fg -BackgroundColor $Bg
+        }
+    }
+
     while ($true) {
         # Title bar
         [Console]::SetCursorPosition($boxLeft, $boxTop)
@@ -286,9 +337,8 @@ function Show-SessionPreview {
         for ($r = 0; $r -lt $headerH; $r++) {
             [Console]::SetCursorPosition($boxLeft, $boxTop + 1 + $r)
             $line = if ($r -lt $head.Count) { $head[$r] } else { '' }
-            if ($line.Length -gt $contentW) { $line = $line.Substring(0, $contentW) }
             Write-Host '║ ' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
-            Write-Host $line.PadRight($contentW) -NoNewline -ForegroundColor $headFg -BackgroundColor $boxBg
+            & $writeHighlighted $line $contentW $headFg $boxBg
             Write-Host ' ║' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
         }
 
@@ -297,9 +347,9 @@ function Show-SessionPreview {
             [Console]::SetCursorPosition($boxLeft, $boxTop + 1 + $headerH + $r)
             $idx = $scrollTop + $r
             $line = if ($idx -lt $body.Count) { $body[$idx] } else { '' }
-            if ($line.Length -gt $contentW) { $line = $line.Substring(0, $contentW) }
-            Write-Host ('║ ' + $line.PadRight($contentW) + ' ║') `
-                -NoNewline -ForegroundColor $boxFg -BackgroundColor $boxBg
+            Write-Host '║ ' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+            & $writeHighlighted $line $contentW $boxFg $boxBg
+            Write-Host ' ║' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
         }
 
         # Bottom border with embedded hint
@@ -469,7 +519,7 @@ function Show-ConfirmDelete {
 
         # Prompt row (centered)
         [Console]::SetCursorPosition($boxLeft, $boxTop + 1 + $rowIdx)
-        $prompt = 'Type "YES" to confirm, ESC to cancel:'
+        $prompt = 'Type "yes" to confirm, ESC to cancel:'
         if ($prompt.Length -ge $contentW) {
             $promptLine = $prompt.Substring(0, $contentW)
         } else {
@@ -555,6 +605,236 @@ function Show-ConfirmDelete {
                 $kc = $key.KeyChar
                 if ($kc -and [int][char]$kc -ge 32 -and [int][char]$kc -ne 127 -and $typed.Length -lt 10) {
                     $typed += $kc
+                }
+            }
+        }
+    }
+}
+
+function Show-SearchPrompt {
+    param(
+        [Parameter(Mandatory)] [int]$ScreenWidth,
+        [Parameter(Mandatory)] [int]$ScreenHeight,
+        [Parameter(Mandatory)] [int]$BaseTop,
+        [string[]]$BackgroundRows = @(),
+        [string]$InitialText = '',
+        [bool]$InitialCaseSensitive = $false
+    )
+
+    $boxW = [Math]::Min(60, $ScreenWidth - 6)
+    if ($boxW -lt 40) { $boxW = [Math]::Max(30, $ScreenWidth - 4) }
+    $boxH = 8
+    if ($boxH -gt ($ScreenHeight - 3)) { $boxH = $ScreenHeight - 3 }
+
+    $contentW = $boxW - 4
+    $contentH = $boxH - 2
+
+    $boxLeft = [int](($ScreenWidth - $boxW) / 2)
+    $boxTop  = $BaseTop + [Math]::Max(0, [int]((($ScreenHeight - 2) - $boxH) / 2))
+
+    $borderFg = 'White'
+    $boxBg    = 'DarkGray'
+    $boxFg    = 'White'
+    $hintFg   = 'Black'
+    $hintBg   = 'Gray'
+    $promptFg = 'Yellow'
+    $checkFg  = 'White'
+    $checkHotFg = 'Yellow'
+    $inputFg  = 'Black'
+    $inputBg  = 'White'
+
+    $shadowChar = {
+        param([int]$Col, [int]$Row)
+        $rel = $Row - $BaseTop
+        if ($rel -lt 0 -or $rel -ge $BackgroundRows.Count) { return ' ' }
+        $t = $BackgroundRows[$rel]
+        if ($Col -lt 0 -or $Col -ge $t.Length) { return ' ' }
+        $c = $t[$Col]
+        if ([int][char]$c -lt 32) { return ' ' }
+        return [string]$c
+    }
+
+    # Helper: blank inner row with proper white side borders.
+    $blankRow = {
+        param([int]$Row)
+        [Console]::SetCursorPosition($boxLeft, $Row)
+        Write-Host '║' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+        Write-Host (' ' * ($boxW - 2)) -NoNewline -ForegroundColor $boxFg -BackgroundColor $boxBg
+        Write-Host '║' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+    }
+
+    $typed         = $InitialText
+    $caretPos      = $typed.Length
+    $caseSensitive = $InitialCaseSensitive
+
+    while ($true) {
+        # Title bar (row 0)
+        [Console]::SetCursorPosition($boxLeft, $boxTop)
+        $title    = ' Search '
+        $padBars  = $boxW - 2 - $title.Length
+        $leftBar  = '═' * [int]($padBars / 2)
+        $rightBar = '═' * ($padBars - $leftBar.Length)
+        Write-Host ('╔' + $leftBar + $title + $rightBar + '╗') `
+            -ForegroundColor $borderFg -BackgroundColor $boxBg -NoNewline
+
+        # Row 1: blank
+        & $blankRow ($boxTop + 1)
+
+        # Row 2: prompt (centered, yellow) — split writes so border chars stay white.
+        [Console]::SetCursorPosition($boxLeft, $boxTop + 2)
+        $prompt = 'Filter by text inside session transcripts:'
+        if ($prompt.Length -ge $contentW) {
+            $promptLine = $prompt.Substring(0, $contentW)
+        } else {
+            $pad        = $contentW - $prompt.Length
+            $lpad       = [int]($pad / 2)
+            $promptLine = (' ' * $lpad) + $prompt + (' ' * ($pad - $lpad))
+        }
+        Write-Host '║ ' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+        Write-Host $promptLine -NoNewline -ForegroundColor $promptFg -BackgroundColor $boxBg
+        Write-Host ' ║' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+
+        # Row 3: input field. Renders the caret as a reversed cell so the
+        # user can see where insertions/deletes will happen.
+        [Console]::SetCursorPosition($boxLeft, $boxTop + 3)
+        $leftPadW  = 4
+        $rightPadW = 4
+        $fieldW    = [Math]::Max(8, $contentW - $leftPadW - $rightPadW)
+        $leftFill  = ' ' * $leftPadW
+        $rightFill = ' ' * ($contentW - $leftPadW - $fieldW)
+
+        # Build a virtual display string: append a space if the caret sits
+        # one past the end of the text, so the caret always has a cell to
+        # render in.
+        $display = $typed
+        if ($caretPos -ge $display.Length) { $display = $display + ' ' }
+
+        # Horizontal scroll so the caret is always visible. Reserve one cell
+        # for the leading space inside the input field.
+        $visibleW = $fieldW - 1
+        if ($visibleW -lt 1) { $visibleW = 1 }
+        $scrollStart = 0
+        if ($display.Length -gt $visibleW) {
+            if ($caretPos -ge $visibleW) { $scrollStart = $caretPos - $visibleW + 1 }
+            if ($scrollStart + $visibleW -gt $display.Length) {
+                $scrollStart = $display.Length - $visibleW
+            }
+            if ($scrollStart -lt 0) { $scrollStart = 0 }
+        }
+        $visiblePart = $display.Substring($scrollStart, [Math]::Min($visibleW, $display.Length - $scrollStart))
+        $caretInVis  = $caretPos - $scrollStart
+        if ($caretInVis -lt 0)                     { $caretInVis = 0 }
+        if ($caretInVis -ge $visiblePart.Length)   { $caretInVis = [Math]::Max(0, $visiblePart.Length - 1) }
+
+        $before  = $visiblePart.Substring(0, $caretInVis)
+        $caretCh = if ($visiblePart.Length -gt $caretInVis) { $visiblePart.Substring($caretInVis, 1) } else { ' ' }
+        $after   = if ($caretInVis + 1 -lt $visiblePart.Length) { $visiblePart.Substring($caretInVis + 1) } else { '' }
+        $usedW   = 1 + $before.Length + 1 + $after.Length   # leading space + before + caret + after
+        $trailPad = $fieldW - $usedW
+        if ($trailPad -lt 0) { $trailPad = 0 }
+
+        Write-Host '║ ' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+        Write-Host $leftFill -NoNewline -ForegroundColor $boxFg -BackgroundColor $boxBg
+        Write-Host ' '       -NoNewline -ForegroundColor $inputFg -BackgroundColor $inputBg
+        if ($before)  { Write-Host $before -NoNewline -ForegroundColor $inputFg -BackgroundColor $inputBg }
+        Write-Host $caretCh -NoNewline -ForegroundColor $inputBg -BackgroundColor $inputFg
+        if ($after)   { Write-Host $after  -NoNewline -ForegroundColor $inputFg -BackgroundColor $inputBg }
+        if ($trailPad -gt 0) {
+            Write-Host (' ' * $trailPad) -NoNewline -ForegroundColor $inputFg -BackgroundColor $inputBg
+        }
+        Write-Host $rightFill -NoNewline -ForegroundColor $boxFg -BackgroundColor $boxBg
+        Write-Host ' ║' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+
+        # Row 4: blank
+        & $blankRow ($boxTop + 4)
+
+        # Row 5: case-sensitive checkbox (centered). Tab toggles it.
+        [Console]::SetCursorPosition($boxLeft, $boxTop + 5)
+        $cbMark   = if ($caseSensitive) { '[x]' } else { '[ ]' }
+        $cbText   = " $cbMark Case-sensitive"
+        $cbHint   = '  (Tab to toggle)'
+        $cbFull   = $cbText + $cbHint
+        $cbPad    = $contentW - $cbFull.Length
+        if ($cbPad -lt 0) { $cbPad = 0 }
+        $cbLpad   = [int]($cbPad / 2)
+        $cbRpad   = $cbPad - $cbLpad
+        Write-Host '║ ' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+        if ($cbLpad -gt 0) { Write-Host (' ' * $cbLpad) -NoNewline -ForegroundColor $boxFg -BackgroundColor $boxBg }
+        $checkColor = if ($caseSensitive) { $checkHotFg } else { $checkFg }
+        Write-Host $cbText -NoNewline -ForegroundColor $checkColor -BackgroundColor $boxBg
+        Write-Host $cbHint -NoNewline -ForegroundColor DarkGray -BackgroundColor $boxBg
+        if ($cbRpad -gt 0) { Write-Host (' ' * $cbRpad) -NoNewline -ForegroundColor $boxFg -BackgroundColor $boxBg }
+        Write-Host ' ║' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+
+        # Row 6: blank
+        & $blankRow ($boxTop + 6)
+
+        # Bottom border with hint (row 7)
+        [Console]::SetCursorPosition($boxLeft, $boxTop + 1 + $contentH)
+        $hint = ' ENTER apply   TAB case-sensitive   ESC cancel '
+        $hintMax = $boxW - 4
+        if ($hint.Length -gt $hintMax) { $hint = $hint.Substring(0, $hintMax) }
+        $padBars  = ($boxW - 2 - $hint.Length)
+        $leftPad  = '═' * [int]($padBars / 2)
+        $rightPad = '═' * ($padBars - $leftPad.Length)
+        Write-Host '╚' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+        Write-Host $leftPad -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+        Write-Host $hint -NoNewline -ForegroundColor $hintFg -BackgroundColor $hintBg
+        Write-Host $rightPad -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+        Write-Host '╝' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+
+        # Dynamic drop shadow
+        for ($r = 1; $r -le ($contentH + 1); $r++) {
+            $sr = $boxTop + $r
+            if ($sr -ge $ScreenHeight) { break }
+            for ($dc = 0; $dc -lt 2; $dc++) {
+                $sc = $boxLeft + $boxW + $dc
+                if ($sc -ge $ScreenWidth) { break }
+                [Console]::SetCursorPosition($sc, $sr)
+                Write-Host (& $shadowChar $sc $sr) -NoNewline -ForegroundColor DarkGray
+            }
+        }
+        $shadowRow = $boxTop + $contentH + 2
+        if ($shadowRow -lt $ScreenHeight) {
+            $sStart = [Math]::Min($ScreenWidth - 1, $boxLeft + 2)
+            $sEnd   = [Math]::Min($ScreenWidth - 1, $boxLeft + $boxW + 1)
+            if ($sEnd -ge $sStart) {
+                [Console]::SetCursorPosition($sStart, $shadowRow)
+                $sb = [System.Text.StringBuilder]::new($sEnd - $sStart + 1)
+                for ($sc = $sStart; $sc -le $sEnd; $sc++) {
+                    [void]$sb.Append((& $shadowChar $sc $shadowRow))
+                }
+                Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+            }
+        }
+
+        try { [Console]::SetCursorPosition(0, [Math]::Min($ScreenHeight - 1, $boxTop + $contentH + 3)) } catch {}
+
+        $key = [Console]::ReadKey($true)
+        switch ($key.Key) {
+            'Escape'    { return $null }
+            'Enter'     { return [pscustomobject]@{ Query = $typed; CaseSensitive = $caseSensitive } }
+            'Tab'       { $caseSensitive = -not $caseSensitive }
+            'LeftArrow'  { if ($caretPos -gt 0)             { $caretPos-- } }
+            'RightArrow' { if ($caretPos -lt $typed.Length) { $caretPos++ } }
+            'Home'       { $caretPos = 0 }
+            'End'        { $caretPos = $typed.Length }
+            'Backspace' {
+                if ($caretPos -gt 0) {
+                    $typed = $typed.Remove($caretPos - 1, 1)
+                    $caretPos--
+                }
+            }
+            'Delete' {
+                if ($caretPos -lt $typed.Length) {
+                    $typed = $typed.Remove($caretPos, 1)
+                }
+            }
+            default {
+                $kc = $key.KeyChar
+                if ($kc -and [int][char]$kc -ge 32 -and [int][char]$kc -ne 127 -and $typed.Length -lt 60) {
+                    $typed = $typed.Insert($caretPos, [string]$kc)
+                    $caretPos++
                 }
             }
         }
@@ -1016,6 +1296,29 @@ function Test-RecommendRemoval {
     return $false
 }
 
+function Test-SessionMatchesQuery {
+    # Stream the .jsonl line-by-line and bail at the first match. Operates on
+    # the raw on-disk bytes so it sees both user messages and assistant
+    # replies without parsing JSON.
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [Parameter(Mandatory)] [string]$Query,
+        [switch]$CaseSensitive
+    )
+    if ([string]::IsNullOrEmpty($Query)) { return $true }
+    $cmp = if ($CaseSensitive) {
+        [System.StringComparison]::Ordinal
+    } else {
+        [System.StringComparison]::OrdinalIgnoreCase
+    }
+    try {
+        foreach ($line in [System.IO.File]::ReadLines($Path)) {
+            if ($line.IndexOf($Query, $cmp) -ge 0) { return $true }
+        }
+    } catch { return $false }
+    return $false
+}
+
 function Get-AllSessions {
     param(
         [Parameter(Mandatory)] [string]$Root,
@@ -1050,7 +1353,10 @@ function Get-AllSessions {
             })
         }
     }
-    return $result
+    # Comma prefix prevents PowerShell from enumerating the list into an
+    # object[] (which is fixed-size and would break later .RemoveAt calls in
+    # the picker when sessions are deleted in place).
+    return ,$result
 }
 
 function Write-SessionsList {
@@ -1125,6 +1431,16 @@ function Show-SessionPicker {
     $needRedraw      = $true
     $rowBuffer       = [System.Collections.Generic.List[string]]::new()
 
+    # Active view: $activeSessions is what the picker shows and operates on.
+    # When the content-search filter (F) is active, it's a subset of $Sessions.
+    $activeSessions       = $Sessions
+    $searchQuery          = ''
+    $searchCaseSensitive  = $false
+
+    # Sessions successfully deleted during this picker run, accumulated across
+    # multiple DEL cycles so the caller can print a final summary on exit.
+    $deletedList = [System.Collections.Generic.List[object]]::new()
+
     try {
         while ($true) {
             if ($cursor -ne $lastCursor) {
@@ -1152,37 +1468,18 @@ function Show-SessionPicker {
                 $key = [Console]::ReadKey($true)
                 $needRedraw = $true
                 switch ($key.Key) {
-                    'UpArrow'   { if ($cursor -gt 0)                   { $cursor-- } }
-                    'DownArrow' { if ($cursor -lt $Sessions.Count - 1) { $cursor++ } }
+                    'UpArrow'   { if ($cursor -gt 0)                         { $cursor-- } }
+                    'DownArrow' { if ($cursor -lt $activeSessions.Count - 1) { $cursor++ } }
                     'Home'      { $cursor = 0 }
-                    'End'       { $cursor = $Sessions.Count - 1 }
+                    'End'       { $cursor = [Math]::Max(0, $activeSessions.Count - 1) }
                     'PageUp'    { $cursor = [Math]::Max(0, $cursor - $viewport) }
-                    'PageDown'  { $cursor = [Math]::Min($Sessions.Count - 1, $cursor + $viewport) }
+                    'PageDown'  { $cursor = [Math]::Min([Math]::Max(0, $activeSessions.Count - 1), $cursor + $viewport) }
                     'Spacebar'  {
-                        Show-SessionPreview -Session $Sessions[$cursor] `
-                            -ScreenWidth $width -ScreenHeight $height -BaseTop $origTop `
-                            -BackgroundRows $rowBuffer.ToArray()
-                        [Console]::Clear()
-                        $origTop = [Console]::CursorTop
-                        for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
-                        $marqueeOffset = 0
-                        $cursorIdleTimer.Restart()
-                    }
-                    'X'         { $Sessions[$cursor].Checked = -not $Sessions[$cursor].Checked }
-                    'A'         {
-                        $anyUnchecked = @($Sessions | Where-Object { -not $_.Checked }).Count -gt 0
-                        foreach ($s in $Sessions) { $s.Checked = $anyUnchecked }
-                    }
-                    'R'         {
-                        foreach ($s in $Sessions) { $s.Checked = $s.Recommended }
-                    }
-                    { $_ -eq 'Delete' -or $_ -eq 'Backspace' } {
-                        $picked = @($Sessions | Where-Object Checked)
-                        if ($picked.Count -gt 0) {
-                            $confirmed = Show-ConfirmDelete -Items $picked `
+                        if ($activeSessions.Count -gt 0) {
+                            Show-SessionPreview -Session $activeSessions[$cursor] `
                                 -ScreenWidth $width -ScreenHeight $height -BaseTop $origTop `
-                                -BackgroundRows $rowBuffer.ToArray()
-                            if ($confirmed) { return $picked }
+                                -BackgroundRows $rowBuffer.ToArray() `
+                                -Query $searchQuery -CaseSensitive $searchCaseSensitive
                             [Console]::Clear()
                             $origTop = [Console]::CursorTop
                             for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
@@ -1190,8 +1487,117 @@ function Show-SessionPicker {
                             $cursorIdleTimer.Restart()
                         }
                     }
-                    'Escape'    { return @() }
-                    'Q'         { return @() }
+                    'X'         {
+                        if ($activeSessions.Count -gt 0) {
+                            $activeSessions[$cursor].Checked = -not $activeSessions[$cursor].Checked
+                        }
+                    }
+                    'A'         {
+                        $anyUnchecked = @($activeSessions | Where-Object { -not $_.Checked }).Count -gt 0
+                        foreach ($s in $activeSessions) { $s.Checked = $anyUnchecked }
+                    }
+                    'R'         {
+                        # Toggle: if the current selection already matches the
+                        # recommended preset, clear everything; otherwise apply
+                        # the preset.
+                        $matchesRecommended = $true
+                        foreach ($s in $activeSessions) {
+                            if ($s.Checked -ne $s.Recommended) { $matchesRecommended = $false; break }
+                        }
+                        if ($matchesRecommended) {
+                            foreach ($s in $activeSessions) { $s.Checked = $false }
+                        } else {
+                            foreach ($s in $activeSessions) { $s.Checked = $s.Recommended }
+                        }
+                    }
+                    'F'         {
+                        if ($searchQuery) {
+                            # Toggle off: clear the filter, restore full view.
+                            # Keep $searchCaseSensitive sticky for the next search.
+                            $searchQuery    = ''
+                            $activeSessions = $Sessions
+                            $cursor = 0; $top = 0
+                            $marqueeOffset = 0
+                            $cursorIdleTimer.Restart()
+                        } else {
+                            $result = Show-SearchPrompt -ScreenWidth $width -ScreenHeight $height `
+                                -BaseTop $origTop -BackgroundRows $rowBuffer.ToArray() `
+                                -InitialCaseSensitive $searchCaseSensitive
+                            [Console]::Clear()
+                            $origTop = [Console]::CursorTop
+                            for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
+
+                            if ($null -ne $result -and $result.Query -and $result.Query.Trim()) {
+                                $q  = $result.Query.Trim()
+                                $cs = [bool]$result.CaseSensitive
+                                [Console]::SetCursorPosition(0, $origTop)
+                                $scanMsg = " Searching $($Sessions.Count) sessions for `"$q`"... "
+                                if ($scanMsg.Length -gt $width) { $scanMsg = $scanMsg.Substring(0, $width) }
+                                Write-Host ($scanMsg.PadRight($width)) -ForegroundColor Black -BackgroundColor Yellow
+                                $activeSessions      = @($Sessions | Where-Object { Test-SessionMatchesQuery -Path $_.Path -Query $q -CaseSensitive:$cs })
+                                $searchQuery         = $q
+                                $searchCaseSensitive = $cs
+                                $cursor = 0; $top = 0
+                            } elseif ($null -ne $result) {
+                                # Apply was hit on empty query — just remember any
+                                # case-sensitive toggle the user made.
+                                $searchCaseSensitive = [bool]$result.CaseSensitive
+                            }
+                            $marqueeOffset = 0
+                            $cursorIdleTimer.Restart()
+                        }
+                    }
+                    { $_ -eq 'Delete' -or $_ -eq 'Backspace' } {
+                        $picked = @($activeSessions | Where-Object Checked)
+                        if ($picked.Count -gt 0) {
+                            $confirmed = Show-ConfirmDelete -Items $picked `
+                                -ScreenWidth $width -ScreenHeight $height -BaseTop $origTop `
+                                -BackgroundRows $rowBuffer.ToArray()
+                            [Console]::Clear()
+                            $origTop = [Console]::CursorTop
+                            for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
+                            $marqueeOffset = 0
+                            $cursorIdleTimer.Restart()
+
+                            if ($confirmed) {
+                                # Delete on disk, prune the in-memory lists,
+                                # and stay in the picker so the user can keep
+                                # working.
+                                $deletedSet = @{}
+                                foreach ($s in $picked) {
+                                    try {
+                                        Remove-Item -LiteralPath $s.Path -Force -ErrorAction Stop
+                                        $deletedSet[$s.Path] = $true
+                                        [void]$deletedList.Add($s)
+                                    } catch {
+                                        # Leave failures in the list; the TUI
+                                        # would clobber any inline error here,
+                                        # and main prints what actually
+                                        # disappeared from disk.
+                                    }
+                                }
+                                if ($deletedSet.Count -gt 0) {
+                                    for ($i = $Sessions.Count - 1; $i -ge 0; $i--) {
+                                        if ($deletedSet.ContainsKey($Sessions[$i].Path)) {
+                                            $Sessions.RemoveAt($i)
+                                        }
+                                    }
+                                    if ($searchQuery) {
+                                        $activeSessions = @($activeSessions | Where-Object { -not $deletedSet.ContainsKey($_.Path) })
+                                    } else {
+                                        $activeSessions = $Sessions
+                                    }
+                                    if ($activeSessions.Count -eq 0) {
+                                        $cursor = 0; $top = 0
+                                    } elseif ($cursor -ge $activeSessions.Count) {
+                                        $cursor = $activeSessions.Count - 1
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    'Escape'    { return $deletedList }
+                    'Q'         { return $deletedList }
                     default {
                         if ($key.KeyChar -eq '?') {
                             Show-About -ScreenWidth $width -ScreenHeight $height -BaseTop $origTop `
@@ -1210,12 +1616,32 @@ function Show-SessionPicker {
             [Console]::SetCursorPosition(0, $origTop)
             $rowBuffer.Clear()
 
-            $checkedCount = @($Sessions | Where-Object Checked).Count
-            $header = " ↑↓ NAV   SPACE preview   X toggle   A all   R recommended   DEL delete   ? about   ESC cancel    [$checkedCount/$($Sessions.Count) selected]"
-            if ($header.Length -gt $width) { $header = $header.Substring(0, $width) }
-            $headerText = $header.PadRight($width)
-            Write-Host $headerText -ForegroundColor Black -BackgroundColor Cyan
-            $rowBuffer.Add($headerText)
+            $checkedCount = @($activeSessions | Where-Object Checked).Count
+
+            if ($searchQuery) {
+                # Header split into three segments so the "F clear filter" pill
+                # can pop in a contrasting yellow/black against the cyan bar.
+                $headLeft  = " ↑↓ NAV   SPACE preview   X toggle   A all   R recommended  "
+                $headPill  = " F clear filter: `"$searchQuery`" "
+                $headRight = "  DEL delete   ? about   ESC cancel    [$checkedCount/$($activeSessions.Count) of $($Sessions.Count) selected]"
+                $combined  = $headLeft + $headPill + $headRight
+                if ($combined.Length -gt $width) {
+                    $over = $combined.Length - $width
+                    $headRight = $headRight.Substring(0, [Math]::Max(0, $headRight.Length - $over))
+                }
+                $padLen = $width - $headLeft.Length - $headPill.Length - $headRight.Length
+                if ($padLen -lt 0) { $padLen = 0 }
+                Write-Host $headLeft  -NoNewline -ForegroundColor Black -BackgroundColor Cyan
+                Write-Host $headPill  -NoNewline -ForegroundColor Black -BackgroundColor Yellow
+                Write-Host ($headRight + (' ' * $padLen)) -ForegroundColor Black -BackgroundColor Cyan
+                $rowBuffer.Add($headLeft + $headPill + $headRight + (' ' * $padLen))
+            } else {
+                $header = " ↑↓ NAV   SPACE preview   X toggle   A all   R recommended   F filter   DEL delete   ? about   ESC cancel    [$checkedCount/$($activeSessions.Count) selected]"
+                if ($header.Length -gt $width) { $header = $header.Substring(0, $width) }
+                $headerText = $header.PadRight($width)
+                Write-Host $headerText -ForegroundColor Black -BackgroundColor Cyan
+                $rowBuffer.Add($headerText)
+            }
 
             $colHeader = "{0}  {1}  {2}  {3}  {4}" -f `
                 '   ',
@@ -1237,13 +1663,21 @@ function Show-SessionPicker {
 
             for ($i = 0; $i -lt $viewport; $i++) {
                 $idx = $top + $i
-                if ($idx -ge $Sessions.Count) {
-                    $emptyRow = ' ' * $width
-                    Write-Host $emptyRow
-                    $rowBuffer.Add($emptyRow)
+                if ($idx -ge $activeSessions.Count) {
+                    if ($i -eq 0 -and $activeSessions.Count -eq 0 -and $searchQuery) {
+                        $msg = "  (no sessions match `"$searchQuery`" — press F to clear the filter)"
+                        if ($msg.Length -gt $width) { $msg = $msg.Substring(0, $width) }
+                        $emptyRow = $msg.PadRight($width)
+                        Write-Host $emptyRow -ForegroundColor DarkYellow
+                        $rowBuffer.Add($emptyRow)
+                    } else {
+                        $emptyRow = ' ' * $width
+                        Write-Host $emptyRow
+                        $rowBuffer.Add($emptyRow)
+                    }
                     continue
                 }
-                $s    = $Sessions[$idx]
+                $s    = $activeSessions[$idx]
                 $mark = if ($s.Checked) { '[x]' } else { '[ ]' }
                 $flag = if ($s.HasCustomTitle) { '!' } else { ' ' }
                 $ts   = $s.Timestamp.ToString('yyyy-MM-dd HH:mm')
@@ -1281,8 +1715,8 @@ function Show-SessionPicker {
             }
 
             $spacerRoom = [Math]::Max(0, $width - 2)
-            $spacerArrow = if (($top + $viewport) -lt $Sessions.Count) { '↓ ' } else { '  ' }
-            if (($top + $viewport) -lt $Sessions.Count) {
+            $spacerArrow = if (($top + $viewport) -lt $activeSessions.Count) { '↓ ' } else { '  ' }
+            if (($top + $viewport) -lt $activeSessions.Count) {
                 Write-Host '↓ ' -NoNewline -ForegroundColor Yellow
             } else {
                 Write-Host '  ' -NoNewline
@@ -1329,19 +1763,14 @@ if ($List) {
         return
     }
 
-    $picked = Show-SessionPicker -Sessions $sessions
-    if (-not $picked -or $picked.Count -eq 0) {
-        Write-Host 'Nothing deleted.' -ForegroundColor Yellow
-        return
-    }
+    $deleted = Show-SessionPicker -Sessions $sessions
+    if (-not $deleted -or $deleted.Count -eq 0) { return }
 
     Write-Host ''
-    foreach ($s in $picked) {
-        try {
-            Remove-Item -LiteralPath $s.Path -Force -ErrorAction Stop
-            Write-Host "  deleted $($s.Uuid)" -ForegroundColor Green
-        } catch {
-            Write-Host "  FAILED  $($s.Uuid): $_" -ForegroundColor Red
-        }
+    foreach ($s in $deleted) {
+        Write-Host "  deleted $($s.Uuid)" -ForegroundColor Green
     }
+    $totalKb = ($deleted | Measure-Object SizeBytes -Sum).Sum / 1KB
+    Write-Host ''
+    Write-Host ("  total: {0} session(s), {1:N1} KB freed" -f $deleted.Count, $totalKb) -ForegroundColor DarkGray
 }
