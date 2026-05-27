@@ -35,6 +35,10 @@ Cross-platform: works on **macOS, Linux, and Windows** under PowerShell 7+ (`pws
 - **Highlights keepers in cyan**: sessions with a user-assigned custom title
   (set via `/title`) are rendered in cyan and marked with a leading `!` to
   flag the ones you most likely want to hold on to.
+- **Rename from the preview**: press **R** inside a session preview to set a
+  custom title without leaving DeClauttR — useful for promoting a spot-on
+  AI-generated title to a custom one (so the row becomes a `!`-flagged
+  keeper) or for relabelling a session into something you'll recognise later.
 - Safe by default: nothing is deleted without an explicit `yes` (case-insensitive) confirmation, and the picker stays open after a delete so you can keep pruning instead of being kicked back to the shell.
 
 ## Requirements
@@ -131,7 +135,7 @@ The picker is the default. Pass `-List` if you want plain text output instead.
 | ↑ / ↓ | move cursor |
 | Home / End | jump to top / bottom |
 | PgUp / PgDn | page up / down |
-| **Space** | open a preview overlay for the highlighted session — session details (project, UUID, title, timestamp, size) stay pinned at the top of the window while the message body scrolls. Drop-shadow renders the underlying picker text in dim grey, like a classic Turbo Vision dialog. Space/Esc to close, ↑↓/PgUp/PgDn to scroll. When a search filter is active (see **F** below), every occurrence of the search string is highlighted in the preview with a yellow background so you can scroll straight to the matches. |
+| **Space** | open a preview overlay for the highlighted session — session details (project, UUID, title, timestamp, size) stay pinned at the top of the window while the message body scrolls. Drop-shadow renders the underlying picker text in dim grey, like a classic Turbo Vision dialog. Space/Esc to close, ↑↓/PgUp/PgDn to scroll, **R** to rename (see below). When a search filter is active (see **F** below), every occurrence of the search string is highlighted in the preview with a yellow background so you can scroll straight to the matches. |
 | **X** | toggle the current row's checkbox |
 | **A** | toggle all (check all, or uncheck if everything was checked) |
 | **R** | re-apply the "recommended for removal" selection |
@@ -153,6 +157,31 @@ the bottom-left if there are rows below.
 #### Session preview (Space)
 
 ![Session preview overlay](img/screenshot-session-preview.jpg)
+
+#### Rename a session (R inside the preview)
+
+With the preview open, press **R** to edit the session's title in place. The
+current title is shown as a dim placeholder on the `Title:` row; the first
+keypress wipes it and switches to a black input field where you can type the
+new title (up to 120 characters).
+
+- **Enter** saves the new title and closes the preview. The picker redraws
+  with the new title in cyan and a leading `!` flag.
+- **Enter** on the *untouched* placeholder promotes the existing title
+  (AI-generated or otherwise) to a custom title — handy when the AI title
+  is already spot-on and you just want the row flagged as a keeper.
+- **Esc** cancels and leaves the session untouched.
+- **←** / **→** / **Home** / **End** / **Backspace** / **Delete** edit the
+  buffer. The first **←** or **→** on the placeholder adopts the existing
+  title as the starting buffer (landing one position from the end or the
+  start respectively), so a small typo fix doesn't require retyping the
+  whole title.
+
+Under the hood, the rename rewrites the session's `.jsonl` transcript in
+place: any prior `custom-title` entries are stripped and a single fresh one
+is appended. This is exactly the same on-disk format Claude uses when you
+run `/title` inside a session, so the new title also shows up in
+`claude --resume` and anywhere else Claude reads it.
 
 #### Content search (F)
 

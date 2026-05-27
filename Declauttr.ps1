@@ -17,6 +17,17 @@
                                scrolls; Space/Esc closes). When a content
                                filter is active, every match of the search
                                string is highlighted with a yellow background.
+                               Inside the preview, press R to rename the
+                               session: the existing title is shown dim as
+                               a placeholder, the first keypress clears it
+                               for typing (←/→/Home/End/Backspace/Delete to
+                               edit, max 120 chars), Enter saves and closes
+                               the preview, Esc cancels. Pressing Enter on
+                               the untouched placeholder promotes the
+                               existing title (AI-generated or otherwise)
+                               to a custom title — handy when the AI title
+                               is already spot-on and you just want the
+                               row to be flagged as a keeper.
       X                        toggle the current row's checkbox
       A                        toggle all rows
       R                        re-apply the "recommended for removal"
@@ -141,6 +152,33 @@ function Get-SessionMetadata {
     }
 }
 
+function Set-SessionCustomTitle {
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [Parameter(Mandatory)] [string]$Title
+    )
+
+    # Rewrites the JSONL transcript in place: strips any pre-existing
+    # custom-title lines, then appends a fresh one. Matches how
+    # Get-SessionMetadata reads — "last custom-title wins" — but keeps the
+    # file tidy by leaving exactly one.
+    $lines = [System.IO.File]::ReadAllLines($Path)
+    $kept  = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in $lines) {
+        if ($line.Contains('"type":"custom-title"')) { continue }
+        $kept.Add($line)
+    }
+
+    $obj  = [pscustomobject]@{ type = 'custom-title'; customTitle = $Title }
+    $json = $obj | ConvertTo-Json -Compress
+    $kept.Add($json)
+
+    $temp     = $Path + '.tmp'
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllLines($temp, $kept, $utf8NoBom)
+    Move-Item -LiteralPath $temp -Destination $Path -Force
+}
+
 function Format-Wrap {
     param(
         [Parameter(Mandatory)] [string]$Text,
@@ -179,7 +217,10 @@ function Get-SessionPreviewContent {
 
     $head.Add("Project:  $($Session.Project)")
     $head.Add("UUID:     $($Session.Uuid)")
-    if ($Session.Title) { $head.Add("Title:    $($Session.Title)") }
+    # Always emit a Title row so the rename overlay has a predictable
+    # anchor, even for sessions that have no AI/custom title yet.
+    $titleText = if ($Session.Title) { $Session.Title } else { '' }
+    $head.Add("Title:    $titleText")
     $head.Add("When:     $($Session.Timestamp.ToString('yyyy-MM-dd HH:mm'))   Size: $($Session.SizeFormatted.Trim())")
     $head.Add('─' * $w)
 
@@ -354,7 +395,7 @@ function Show-SessionPreview {
 
         # Bottom border with embedded hint
         [Console]::SetCursorPosition($boxLeft, $boxTop + 1 + $contentH)
-        $hint = " SPACE/ESC close   ↑↓ PgUp/PgDn scroll "
+        $hint = " SPACE/ESC close   ↑↓ PgUp/PgDn scroll   R rename "
         if ($body.Count -gt $bodyH) {
             $shown = [Math]::Min($body.Count, $scrollTop + $bodyH)
             $hint += "[$($scrollTop + 1)-$shown/$($body.Count)] "
@@ -409,6 +450,180 @@ function Show-SessionPreview {
             'PageDown'  { $scrollTop = [Math]::Min($maxScroll, $scrollTop + $bodyH) }
             'Home'      { $scrollTop = 0 }
             'End'       { $scrollTop = $maxScroll }
+            'R' {
+                # Inline rename: edits the Title row in place. The current
+                # title is shown as a dim placeholder; the first keypress
+                # wipes it and switches to a black input field. ENTER
+                # commits and closes the preview so the caller can refresh
+                # the list; ESC leaves everything untouched.
+                $titleRowIdx = -1
+                for ($i = 0; $i -lt $head.Count; $i++) {
+                    if ($head[$i].StartsWith('Title:')) { $titleRowIdx = $i; break }
+                }
+                if ($titleRowIdx -lt 0 -or $titleRowIdx -ge $headerH) { break }
+
+                $titlePrefix = 'Title:    '
+                $prefixLen   = $titlePrefix.Length
+                $fieldWidth  = [Math]::Min(120, [Math]::Max(10, $contentW - $prefixLen))
+                $maxLen      = [Math]::Min(120, $fieldWidth)
+                $current     = if ($Session.Title) { $Session.Title } else { '' }
+                $buffer      = ''
+                $cursorPos   = 0
+                $cleared     = $false
+                $rowY        = $boxTop + 1 + $titleRowIdx
+                $fieldX      = $boxLeft + 2 + $prefixLen
+
+                # [Console]::CursorVisible getter throws on macOS/Linux;
+                # only the setter is portable. The picker hides the cursor
+                # while the list is active, so restore to hidden on exit.
+                try { [Console]::CursorVisible = $true } catch {}
+
+                $renameDone = $false
+                $renameSaved = $false
+                while (-not $renameDone) {
+                    # Redraw the Title row with placeholder or input field.
+                    [Console]::SetCursorPosition($boxLeft, $rowY)
+                    Write-Host '║ ' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+                    Write-Host $titlePrefix -NoNewline -ForegroundColor $headFg -BackgroundColor $boxBg
+                    if (-not $cleared) {
+                        $display = $current
+                        if ($display.Length -gt $fieldWidth) { $display = $display.Substring(0, $fieldWidth) }
+                        Write-Host $display.PadRight($fieldWidth) -NoNewline `
+                            -ForegroundColor DarkYellow -BackgroundColor $boxBg
+                    } else {
+                        $display = $buffer
+                        if ($display.Length -gt $fieldWidth) { $display = $display.Substring(0, $fieldWidth) }
+                        Write-Host $display.PadRight($fieldWidth) -NoNewline `
+                            -ForegroundColor White -BackgroundColor Black
+                    }
+                    $tail = $contentW - $prefixLen - $fieldWidth
+                    if ($tail -gt 0) {
+                        Write-Host (' ' * $tail) -NoNewline -ForegroundColor $headFg -BackgroundColor $boxBg
+                    }
+                    Write-Host ' ║' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+
+                    # Rename-mode hint replaces the normal preview hint.
+                    [Console]::SetCursorPosition($boxLeft, $boxTop + 1 + $contentH)
+                    $hintR    = ' ENTER save   ESC cancel   ←→ Home/End edit '
+                    $hintMaxR = $boxW - 4
+                    if ($hintR.Length -gt $hintMaxR) { $hintR = $hintR.Substring(0, $hintMaxR) }
+                    $padBarsR  = $boxW - 2 - $hintR.Length
+                    $leftPadR  = '═' * [int]($padBarsR / 2)
+                    $rightPadR = '═' * ($padBarsR - $leftPadR.Length)
+                    Write-Host '╚' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+                    Write-Host $leftPadR -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+                    Write-Host $hintR -NoNewline -ForegroundColor $hintFg -BackgroundColor $hintBg
+                    Write-Host $rightPadR -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+                    Write-Host '╝' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+
+                    $cx = if ($cleared) {
+                        [Math]::Min($fieldX + $cursorPos, $fieldX + $fieldWidth - 1)
+                    } else { $fieldX }
+                    try { [Console]::SetCursorPosition($cx, $rowY) } catch {}
+
+                    $rk = [Console]::ReadKey($true)
+                    switch ($rk.Key) {
+                        'Escape' { $renameDone = $true }
+                        'Enter' {
+                            # Untouched placeholder + ENTER = promote the
+                            # existing title (AI or already-custom) to a
+                            # custom title. Useful when the AI title is
+                            # spot-on and the user just wants the `!` flag.
+                            $trimmed = if ($cleared) { $buffer.Trim() } else { $current.Trim() }
+                            if ([string]::IsNullOrEmpty($trimmed)) {
+                                # No title to save in either branch — cancel.
+                                $renameDone = $true
+                            } else {
+                                try {
+                                    Set-SessionCustomTitle -Path $Session.Path -Title $trimmed
+                                    $Session.Title          = $trimmed
+                                    $Session.HasCustomTitle = $true
+                                    $renameSaved = $true
+                                } catch {
+                                    # Swallow: silently cancel rather than
+                                    # corrupting the TUI with an error blob.
+                                }
+                                $renameDone = $true
+                            }
+                        }
+                        'LeftArrow' {
+                            # First arrow on the placeholder adopts the
+                            # existing title as the buffer so the user can
+                            # make a minor edit without retyping everything.
+                            if (-not $cleared -and $current.Length -gt 0) {
+                                $cleared = $true
+                                $buffer = if ($current.Length -gt $maxLen) { $current.Substring(0, $maxLen) } else { $current }
+                                $cursorPos = $buffer.Length
+                            }
+                            if ($cleared -and $cursorPos -gt 0) { $cursorPos-- }
+                        }
+                        'RightArrow' {
+                            # Mirror LeftArrow's tail-edit landing with a
+                            # head-edit landing: adopt the title and place
+                            # the cursor one step in from the start.
+                            if (-not $cleared -and $current.Length -gt 0) {
+                                $cleared = $true
+                                $buffer = if ($current.Length -gt $maxLen) { $current.Substring(0, $maxLen) } else { $current }
+                                $cursorPos = [Math]::Min(1, $buffer.Length)
+                            } elseif ($cleared -and $cursorPos -lt $buffer.Length) {
+                                $cursorPos++
+                            }
+                        }
+                        'Home' {
+                            if (-not $cleared -and $current.Length -gt 0) {
+                                $cleared = $true
+                                $buffer = if ($current.Length -gt $maxLen) { $current.Substring(0, $maxLen) } else { $current }
+                            }
+                            if ($cleared) { $cursorPos = 0 }
+                        }
+                        'End' {
+                            if (-not $cleared -and $current.Length -gt 0) {
+                                $cleared = $true
+                                $buffer = if ($current.Length -gt $maxLen) { $current.Substring(0, $maxLen) } else { $current }
+                            }
+                            if ($cleared) { $cursorPos = $buffer.Length }
+                        }
+                        'Backspace' {
+                            if (-not $cleared) {
+                                $cleared = $true; $buffer = ''; $cursorPos = 0
+                            } elseif ($cursorPos -gt 0) {
+                                $buffer    = $buffer.Substring(0, $cursorPos - 1) + $buffer.Substring($cursorPos)
+                                $cursorPos--
+                            }
+                        }
+                        'Delete' {
+                            if (-not $cleared) {
+                                $cleared = $true; $buffer = ''; $cursorPos = 0
+                            } elseif ($cursorPos -lt $buffer.Length) {
+                                $buffer = $buffer.Substring(0, $cursorPos) + $buffer.Substring($cursorPos + 1)
+                            }
+                        }
+                        default {
+                            $kc = $rk.KeyChar
+                            if ($kc -and -not [char]::IsControl($kc)) {
+                                if (-not $cleared) { $cleared = $true; $buffer = ''; $cursorPos = 0 }
+                                if ($buffer.Length -lt $maxLen) {
+                                    $buffer    = $buffer.Substring(0, $cursorPos) + $kc + $buffer.Substring($cursorPos)
+                                    $cursorPos++
+                                }
+                            }
+                        }
+                    }
+                }
+
+                try { [Console]::CursorVisible = $false } catch {}
+
+                if ($renameSaved) {
+                    # Close the preview so the caller redraws the list with
+                    # the new title + custom-title flag.
+                    return
+                }
+                # Cancelled: refresh the preview header so the dim
+                # placeholder is replaced with the normal yellow Title row.
+                $data = Get-SessionPreviewContent -Session $Session -Width $contentW
+                $head = $data.Header
+                $body = $data.Body
+            }
         }
     }
 }
