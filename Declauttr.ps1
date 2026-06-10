@@ -847,6 +847,178 @@ function Show-ConfirmDelete {
     }
 }
 
+function Show-MessageBox {
+    # A one-shot centered popup: draws a bordered box with a title, a few lines
+    # of body text, and a hint baked into the bottom border, using the same
+    # drop-shadow convention as the other overlays. Draws once, waits for a
+    # single key, and returns that ConsoleKeyInfo. Callers repaint behind it.
+    param(
+        [Parameter(Mandatory)] [string]$Title,
+        [Parameter(Mandatory)] [string[]]$Lines,
+        [Parameter(Mandatory)] [string]$Hint,
+        [Parameter(Mandatory)] [int]$ScreenWidth,
+        [Parameter(Mandatory)] [int]$ScreenHeight,
+        [Parameter(Mandatory)] [int]$BaseTop,
+        [string[]]$BackgroundRows = @(),
+        [string]$AccentColor = 'White'
+    )
+
+    $boxW = [Math]::Min(70, $ScreenWidth - 6)
+    if ($boxW -lt 40) { $boxW = [Math]::Max(30, $ScreenWidth - 4) }
+    $contentW = $boxW - 4
+
+    # One row per line plus a blank pad row above and below.
+    $contentH = $Lines.Count + 2
+    $boxH = $contentH + 2
+    if ($boxH -gt ($ScreenHeight - 3)) {
+        $boxH = $ScreenHeight - 3
+        $contentH = $boxH - 2
+    }
+
+    $boxLeft = [int](($ScreenWidth - $boxW) / 2)
+    $boxTop  = $BaseTop + [Math]::Max(0, [int]((($ScreenHeight - 2) - $boxH) / 2))
+
+    $boxBg    = 'DarkGray'
+    $borderFg = 'White'
+    $hintFg   = 'Black'
+    $hintBg   = 'Gray'
+
+    $shadowChar = {
+        param([int]$Col, [int]$Row)
+        $rel = $Row - $BaseTop
+        if ($rel -lt 0 -or $rel -ge $BackgroundRows.Count) { return ' ' }
+        $t = $BackgroundRows[$rel]
+        if ($Col -lt 0 -or $Col -ge $t.Length) { return ' ' }
+        $c = $t[$Col]
+        if ([int][char]$c -lt 32) { return ' ' }
+        return [string]$c
+    }
+
+    # Title bar
+    [Console]::SetCursorPosition($boxLeft, $boxTop)
+    if ($Title.Length -gt ($boxW - 2)) { $Title = $Title.Substring(0, $boxW - 2) }
+    $padBars  = $boxW - 2 - $Title.Length
+    $leftBar  = '═' * [int]($padBars / 2)
+    $rightBar = '═' * ($padBars - $leftBar.Length)
+    Write-Host ('╔' + $leftBar + $Title + $rightBar + '╗') `
+        -ForegroundColor $borderFg -BackgroundColor $boxBg -NoNewline
+
+    # Content rows (blank pad, lines, blank pad), clamped/filled to contentH.
+    $rendered = @('') + $Lines + @('')
+    for ($r = 0; $r -lt $contentH; $r++) {
+        [Console]::SetCursorPosition($boxLeft, $boxTop + 1 + $r)
+        $line = if ($r -lt $rendered.Count) { [string]$rendered[$r] } else { '' }
+        if ($line.Length -gt $contentW) { $line = $line.Substring(0, $contentW) }
+        Write-Host '║ ' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+        Write-Host $line.PadRight($contentW) -NoNewline -ForegroundColor $AccentColor -BackgroundColor $boxBg
+        Write-Host ' ║' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+    }
+
+    # Bottom border with embedded hint
+    [Console]::SetCursorPosition($boxLeft, $boxTop + 1 + $contentH)
+    $h = $Hint
+    $hintMax = $boxW - 4
+    if ($h.Length -gt $hintMax) { $h = $h.Substring(0, $hintMax) }
+    $padBars2 = $boxW - 2 - $h.Length
+    $leftPad  = '═' * [int]($padBars2 / 2)
+    $rightPad = '═' * ($padBars2 - $leftPad.Length)
+    Write-Host '╚' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+    Write-Host $leftPad -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+    Write-Host $h -NoNewline -ForegroundColor $hintFg -BackgroundColor $hintBg
+    Write-Host $rightPad -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+    Write-Host '╝' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+
+    # Drop shadow (same convention as Show-ConfirmDelete / Show-SessionPreview).
+    for ($r = 1; $r -le ($contentH + 1); $r++) {
+        $sr = $boxTop + $r
+        if ($sr -ge $ScreenHeight) { break }
+        for ($dc = 0; $dc -lt 2; $dc++) {
+            $sc = $boxLeft + $boxW + $dc
+            if ($sc -ge $ScreenWidth) { break }
+            [Console]::SetCursorPosition($sc, $sr)
+            Write-Host (& $shadowChar $sc $sr) -NoNewline -ForegroundColor DarkGray
+        }
+    }
+    $shadowRow = $boxTop + $contentH + 2
+    if ($shadowRow -lt $ScreenHeight) {
+        $sStart = [Math]::Min($ScreenWidth - 1, $boxLeft + 2)
+        $sEnd   = [Math]::Min($ScreenWidth - 1, $boxLeft + $boxW + 1)
+        if ($sEnd -ge $sStart) {
+            [Console]::SetCursorPosition($sStart, $shadowRow)
+            $sb = [System.Text.StringBuilder]::new($sEnd - $sStart + 1)
+            for ($sc = $sStart; $sc -le $sEnd; $sc++) {
+                [void]$sb.Append((& $shadowChar $sc $shadowRow))
+            }
+            Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+        }
+    }
+
+    try { [Console]::SetCursorPosition(0, [Math]::Min($ScreenHeight - 1, $boxTop + $contentH + 3)) } catch {}
+
+    return [Console]::ReadKey($true)
+}
+
+function Invoke-JumpAttempt {
+    # Validates that the highlighted session can be resumed and, if so, asks for
+    # a single-key confirmation. On confirm it arms the jump by setting
+    # $script:JumpSession (which main reads to perform the cd + claude --resume
+    # handoff) and returns $true so the caller can exit its loop. Returns $false
+    # when the jump can't proceed or the user cancels — the caller stays put.
+    param(
+        [Parameter(Mandatory)] [object]$Session,
+        [Parameter(Mandatory)] [int]$ScreenWidth,
+        [Parameter(Mandatory)] [int]$ScreenHeight,
+        [Parameter(Mandatory)] [int]$BaseTop,
+        [string[]]$BackgroundRows = @()
+    )
+
+    $cwd = Get-SessionCwd -Path $Session.Path
+
+    $err = $null
+    if (-not $cwd) {
+        $err = 'No working directory was recorded for this session, so it cannot be resumed.'
+    } elseif (-not (Test-Path -LiteralPath $cwd)) {
+        $err = "That session's working directory no longer exists:  $cwd"
+    } elseif (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
+        $err = 'The claude CLI was not found on your PATH, so DeClauttR cannot launch it.'
+    }
+
+    if ($err) {
+        $wrapped = @(Format-Wrap -Text $err -Width ([Math]::Min(64, $ScreenWidth - 10)))
+        [void](Show-MessageBox -Title ' Cannot jump ' -Lines $wrapped `
+            -Hint ' press any key to go back ' `
+            -ScreenWidth $ScreenWidth -ScreenHeight $ScreenHeight -BaseTop $BaseTop `
+            -BackgroundRows $BackgroundRows -AccentColor 'Yellow')
+        return $false
+    }
+
+    $label = if ($Session.Title) { $Session.Title } else { $Session.Snippet }
+    $maxLabel = [Math]::Min(60, $ScreenWidth - 12)
+    if ($label.Length -gt $maxLabel) { $label = $label.Substring(0, $maxLabel - 1) + '…' }
+
+    $lines = @(
+        'Leave DeClauttR and jump straight back into',
+        'this conversation?',
+        '',
+        "Project:  $($Session.Project)",
+        "Title:    $label"
+    )
+
+    $key = Show-MessageBox -Title ' Jump to session ' -Lines $lines `
+        -Hint ' J again to jump — any other key cancels ' `
+        -ScreenWidth $ScreenWidth -ScreenHeight $ScreenHeight -BaseTop $BaseTop `
+        -BackgroundRows $BackgroundRows -AccentColor 'White'
+
+    if ($key.Key -eq 'J') {
+        $script:JumpSession = [pscustomobject]@{
+            SessionId = $Session.Uuid
+            Cwd       = $cwd
+        }
+        return $true
+    }
+    return $false
+}
+
 function Show-SearchPrompt {
     param(
         [Parameter(Mandatory)] [int]$ScreenWidth,
