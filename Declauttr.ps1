@@ -871,7 +871,7 @@ function Show-MessageBox {
     # single key, and returns that ConsoleKeyInfo. Callers repaint behind it.
     param(
         [Parameter(Mandatory)] [string]$Title,
-        [Parameter(Mandatory)] [string[]]$Lines,
+        [string[]]$Lines = @(),
         [Parameter(Mandatory)] [string]$Hint,
         [Parameter(Mandatory)] [int]$ScreenWidth,
         [Parameter(Mandatory)] [int]$ScreenHeight,
