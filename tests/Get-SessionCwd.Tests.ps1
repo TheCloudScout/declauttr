@@ -42,7 +42,14 @@ $f3 = Join-Path $tmp 'declauttr-cwd-3.jsonl'
 ) | Set-Content -LiteralPath $f3 -Encoding utf8
 Assert-Equal $null (Get-SessionCwd -Path $f3) 'no cwd returns null'
 
-Remove-Item -LiteralPath $f1, $f2, $f3 -ErrorAction SilentlyContinue
+# 4. cwd present but empty string — should be skipped, returns $null
+$f4 = Join-Path $tmp 'declauttr-cwd-4.jsonl'
+@(
+    '{"type":"user","cwd":"","message":{"content":"hi"}}'
+) | Set-Content -LiteralPath $f4 -Encoding utf8
+Assert-Equal $null (Get-SessionCwd -Path $f4) 'empty-string cwd skipped'
+
+Remove-Item -LiteralPath $f1, $f2, $f3, $f4 -ErrorAction SilentlyContinue
 
 if ($script:failures -gt 0) {
     Write-Host "`n$script:failures test(s) failed." -ForegroundColor Red

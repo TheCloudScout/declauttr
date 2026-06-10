@@ -163,6 +163,7 @@ function Get-SessionCwd {
     # folder name is indistinguishable from a path separator), so we read the
     # cwd straight from the file. Returns the first value found, or $null.
     foreach ($line in [System.IO.File]::ReadLines($Path)) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
         if (-not $line.Contains('"cwd"')) { continue }
         try {
             $obj = $line | ConvertFrom-Json -ErrorAction Stop
