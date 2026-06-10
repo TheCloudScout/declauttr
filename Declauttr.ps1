@@ -907,7 +907,7 @@ function Show-MessageBox {
     $rendered = @('') + $Lines + @('')
     for ($r = 0; $r -lt $contentH; $r++) {
         [Console]::SetCursorPosition($boxLeft, $boxTop + 1 + $r)
-        $line = if ($r -lt $rendered.Count) { [string]$rendered[$r] } else { '' }
+        $line = [string]$rendered[$r]
         if ($line.Length -gt $contentW) { $line = $line.Substring(0, $contentW) }
         Write-Host '║ ' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
         Write-Host $line.PadRight($contentW) -NoNewline -ForegroundColor $AccentColor -BackgroundColor $boxBg
@@ -993,7 +993,7 @@ function Invoke-JumpAttempt {
     }
 
     $label = if ($Session.Title) { $Session.Title } else { $Session.Snippet }
-    $maxLabel = [Math]::Min(60, $ScreenWidth - 12)
+    $maxLabel = [Math]::Max(10, [Math]::Min(60, $ScreenWidth - 12))
     if ($label.Length -gt $maxLabel) { $label = $label.Substring(0, $maxLabel - 1) + '…' }
 
     $lines = @(
