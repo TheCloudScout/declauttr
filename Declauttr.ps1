@@ -1849,6 +1849,10 @@ function Show-SessionPicker {
     # multiple DEL cycles so the caller can print a final summary on exit.
     $deletedList = [System.Collections.Generic.List[object]]::new()
 
+    # Reset any stale jump signal so a leftover value can't trigger a silent
+    # exit on the first keypress. Invoke-JumpAttempt (J / preview) re-arms it.
+    $script:JumpSession = $null
+
     try {
         while ($true) {
             if ($cursor -ne $lastCursor) {
