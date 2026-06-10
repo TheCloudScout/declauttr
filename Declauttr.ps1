@@ -1956,6 +1956,10 @@ function Show-SessionPicker {
 
 # --- main ---
 
+# When this script is dot-sourced (e.g. by the tests in ./tests), load all the
+# function definitions above but skip running the interactive app.
+if ($MyInvocation.InvocationName -eq '.') { return }
+
 Clear-Host
 
 if ($About) {
