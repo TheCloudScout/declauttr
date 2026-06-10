@@ -140,7 +140,7 @@ The picker is the default. Pass `-List` if you want plain text output instead.
 | Home / End | jump to top / bottom |
 | PgUp / PgDn | page up / down |
 | **Space** | open a preview overlay for the highlighted session — session details (project, UUID, title, timestamp, size) stay pinned at the top of the window while the message body scrolls. Drop-shadow renders the underlying picker text in dim grey, like a classic Turbo Vision dialog. Space/Esc to close, ↑↓/PgUp/PgDn to scroll, **R** to rename (see below). When a search filter is active (see **F** below), every occurrence of the search string is highlighted in the preview with a yellow background so you can scroll straight to the matches. |
-| **J** | jump into the highlighted session: quit DeClauttR and resume it with `claude --resume`, after `cd`-ing into the session's original working directory (recovered from the transcript). Press **J** once for a confirmation popup, then **J** again to confirm — any other key cancels. Also available from inside the preview. If the directory no longer exists or `claude` isn't on your `PATH`, DeClauttR shows a brief notice and stays put. |
+| **J** | jump into the highlighted session: quit DeClauttR and resume it with `claude --resume`, after changing into the session's original working directory (recovered from the transcript). Press **J** once for a confirmation popup, then **J** again to confirm — any other key cancels. Also available from inside the preview. If the directory no longer exists or `claude` isn't on your `PATH`, DeClauttR shows a brief notice and stays put. |
 | **X** | toggle the current row's checkbox |
 | **A** | toggle all (check all, or uncheck if everything was checked) |
 | **R** | re-apply the "recommended for removal" selection |
