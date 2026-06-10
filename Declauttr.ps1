@@ -2182,6 +2182,10 @@ function Show-SessionPicker {
 # function definitions above but skip running the interactive app.
 if ($MyInvocation.InvocationName -eq '.') { return }
 
+# Set when the user confirms a jump (J) in the picker or preview; main reads it
+# below to cd into the session's directory and resume it with claude.
+$script:JumpSession = $null
+
 Clear-Host
 
 if ($About) {
@@ -2205,6 +2209,18 @@ if ($List) {
     }
 
     $deleted = Show-SessionPicker -Sessions $sessions
+
+    if ($script:JumpSession) {
+        Clear-Host
+        Write-Host ("Resuming session {0}" -f $script:JumpSession.SessionId) -ForegroundColor DarkGray
+        Write-Host ("  in {0}`n" -f $script:JumpSession.Cwd) -ForegroundColor DarkGray
+        # Set-Location only affects this pwsh process, so the parent shell's cwd
+        # is unchanged after claude exits. claude inherits the terminal.
+        Set-Location -LiteralPath $script:JumpSession.Cwd
+        & claude --resume $script:JumpSession.SessionId
+        return
+    }
+
     if (-not $deleted -or $deleted.Count -eq 0) { return }
 
     Write-Host ''
