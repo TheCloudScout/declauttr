@@ -1020,13 +1020,14 @@ function Invoke-JumpAttempt {
     $maxLabel = [Math]::Max(10, [Math]::Min(60, $ScreenWidth - 12))
     if ($label.Length -gt $maxLabel) { $label = $label.Substring(0, $maxLabel - 1) + '…' }
 
-    $lines = @(
-        'Leave DeClauttR and jump straight back into',
-        'this conversation?',
-        '',
-        "Project:  $($Session.Project)",
-        "Title:    $label"
-    )
+    # Wrap the question to the box width (like the error popup above) instead of
+    # hardcoding a line break, so it stays on one line when it fits and wraps at
+    # a word boundary — not mid-phrase — on a narrow terminal.
+    $lines  = @(Format-Wrap -Text 'Leave DeClauttR and jump straight back into this conversation?' `
+            -Width ([Math]::Min(64, $ScreenWidth - 10)))
+    $lines += ''
+    $lines += "Project:  $($Session.Project)"
+    $lines += "Title:    $label"
 
     $key = Show-MessageBox -Title ' Jump to session ' -Lines $lines `
         -Hint ' J again to jump — any other key cancels ' `
