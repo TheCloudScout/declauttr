@@ -989,7 +989,14 @@ function Invoke-JumpAttempt {
         [string[]]$BackgroundRows = @()
     )
 
-    $cwd = Get-SessionCwd -Path $Session.Path
+    try {
+        $cwd = Get-SessionCwd -Path $Session.Path
+    } catch {
+        # Transcript unreadable (e.g. deleted in the window since the scan) —
+        # treat as "no working directory" so we refuse and stay (per the design)
+        # instead of letting a raw error escape the TUI.
+        $cwd = $null
+    }
 
     $err = $null
     if (-not $cwd) {
