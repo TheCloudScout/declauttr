@@ -152,6 +152,26 @@ function Get-SessionMetadata {
     }
 }
 
+function Get-SessionCwd {
+    param(
+        [Parameter(Mandatory)] [string]$Path
+    )
+
+    # Recover the session's real working directory from the transcript. Every
+    # user/assistant line records a "cwd" field with the absolute path; the
+    # encoded project-folder name can't be decoded reliably (a literal dash in a
+    # folder name is indistinguishable from a path separator), so we read the
+    # cwd straight from the file. Returns the first value found, or $null.
+    foreach ($line in [System.IO.File]::ReadLines($Path)) {
+        if (-not $line.Contains('"cwd"')) { continue }
+        try {
+            $obj = $line | ConvertFrom-Json -ErrorAction Stop
+        } catch { continue }
+        if ($obj.cwd) { return [string]$obj.cwd }
+    }
+    return $null
+}
+
 function Set-SessionCustomTitle {
     param(
         [Parameter(Mandatory)] [string]$Path,
