@@ -1888,6 +1888,21 @@ function Show-SessionPicker {
                                 -ScreenWidth $width -ScreenHeight $height -BaseTop $origTop `
                                 -BackgroundRows $rowBuffer.ToArray() `
                                 -Query $searchQuery -CaseSensitive $searchCaseSensitive
+                            if ($script:JumpSession) { return $deletedList }
+                            [Console]::Clear()
+                            $origTop = [Console]::CursorTop
+                            for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
+                            $marqueeOffset = 0
+                            $cursorIdleTimer.Restart()
+                        }
+                    }
+                    'J'         {
+                        if ($activeSessions.Count -gt 0) {
+                            $jumped = Invoke-JumpAttempt -Session $activeSessions[$cursor] `
+                                -ScreenWidth $width -ScreenHeight $height -BaseTop $origTop `
+                                -BackgroundRows $rowBuffer.ToArray()
+                            if ($jumped) { return $deletedList }
+                            # Cancelled or refused: repaint the picker behind the closed popup.
                             [Console]::Clear()
                             $origTop = [Console]::CursorTop
                             for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
@@ -2029,7 +2044,7 @@ function Show-SessionPicker {
             if ($searchQuery) {
                 # Header split into three segments so the "F clear filter" pill
                 # can pop in a contrasting yellow/black against the cyan bar.
-                $headLeft  = " ↑↓ NAV   SPACE preview   X toggle   A all   R recommended  "
+                $headLeft  = " ↑↓ NAV   SPACE preview   J jump   X toggle   A all   R recommended  "
                 $headPill  = " F clear filter: `"$searchQuery`" "
                 $headRight = "  DEL delete   ? about   ESC cancel    [$checkedCount/$($activeSessions.Count) of $($Sessions.Count) selected]"
                 $combined  = $headLeft + $headPill + $headRight
@@ -2044,7 +2059,7 @@ function Show-SessionPicker {
                 Write-Host ($headRight + (' ' * $padLen)) -ForegroundColor Black -BackgroundColor Cyan
                 $rowBuffer.Add($headLeft + $headPill + $headRight + (' ' * $padLen))
             } else {
-                $header = " ↑↓ NAV   SPACE preview   X toggle   A all   R recommended   F filter   DEL delete   ? about   ESC cancel    [$checkedCount/$($activeSessions.Count) selected]"
+                $header = " ↑↓ NAV   SPACE preview   J jump   X toggle   A all   R recommended   F filter   DEL delete   ? about   ESC cancel    [$checkedCount/$($activeSessions.Count) selected]"
                 if ($header.Length -gt $width) { $header = $header.Substring(0, $width) }
                 $headerText = $header.PadRight($width)
                 Write-Host $headerText -ForegroundColor Black -BackgroundColor Cyan
