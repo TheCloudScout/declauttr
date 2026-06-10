@@ -28,6 +28,13 @@
                                to a custom title — handy when the AI title
                                is already spot-on and you just want the
                                row to be flagged as a keeper.
+      J                        jump into the highlighted session — quit
+                               DeClauttR and resume it with
+                               `claude --resume`, after changing into the
+                               session's original working directory. Press J
+                               once for a confirmation popup, then J again to
+                               confirm; any other key cancels. Works from the
+                               list and from inside the preview.
       X                        toggle the current row's checkbox
       A                        toggle all rows
       R                        re-apply the "recommended for removal"
