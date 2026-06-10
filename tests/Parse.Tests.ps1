@@ -7,7 +7,7 @@ $errors = $null
     "$PSScriptRoot/../Declauttr.ps1", [ref]$null, [ref]$errors) | Out-Null
 
 if ($errors) {
-    $errors | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+    $errors | ForEach-Object { Write-Error $_ }
     exit 1
 }
 Write-Host 'Declauttr.ps1 parses cleanly.' -ForegroundColor Green
