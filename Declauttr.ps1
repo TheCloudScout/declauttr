@@ -945,28 +945,33 @@ function Show-MessageBox {
     Write-Host $rightPad -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
     Write-Host '╝' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
 
-    # Drop shadow (same convention as Show-ConfirmDelete / Show-SessionPreview).
-    for ($r = 1; $r -le ($contentH + 1); $r++) {
-        $sr = $boxTop + $r
-        if ($sr -ge $ScreenHeight) { break }
-        for ($dc = 0; $dc -lt 2; $dc++) {
-            $sc = $boxLeft + $boxW + $dc
-            if ($sc -ge $ScreenWidth) { break }
-            [Console]::SetCursorPosition($sc, $sr)
-            Write-Host (& $shadowChar $sc $sr) -NoNewline -ForegroundColor DarkGray
-        }
-    }
-    $shadowRow = $boxTop + $contentH + 2
-    if ($shadowRow -lt $ScreenHeight) {
-        $sStart = [Math]::Min($ScreenWidth - 1, $boxLeft + 2)
-        $sEnd   = [Math]::Min($ScreenWidth - 1, $boxLeft + $boxW + 1)
-        if ($sEnd -ge $sStart) {
-            [Console]::SetCursorPosition($sStart, $shadowRow)
-            $sb = [System.Text.StringBuilder]::new($sEnd - $sStart + 1)
-            for ($sc = $sStart; $sc -le $sEnd; $sc++) {
-                [void]$sb.Append((& $shadowChar $sc $shadowRow))
+    # Drop shadow — only when we have real background content to dim. Callers
+    # that can't supply what's actually on screen (the popup over the full-screen
+    # preview passes an empty array) skip it: a "shadow" of blank cells would
+    # paint black blocks over the underlying text instead of dimming it.
+    if ($BackgroundRows.Count -gt 0) {
+        for ($r = 1; $r -le ($contentH + 1); $r++) {
+            $sr = $boxTop + $r
+            if ($sr -ge $ScreenHeight) { break }
+            for ($dc = 0; $dc -lt 2; $dc++) {
+                $sc = $boxLeft + $boxW + $dc
+                if ($sc -ge $ScreenWidth) { break }
+                [Console]::SetCursorPosition($sc, $sr)
+                Write-Host (& $shadowChar $sc $sr) -NoNewline -ForegroundColor DarkGray
             }
-            Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+        }
+        $shadowRow = $boxTop + $contentH + 2
+        if ($shadowRow -lt $ScreenHeight) {
+            $sStart = [Math]::Min($ScreenWidth - 1, $boxLeft + 2)
+            $sEnd   = [Math]::Min($ScreenWidth - 1, $boxLeft + $boxW + 1)
+            if ($sEnd -ge $sStart) {
+                [Console]::SetCursorPosition($sStart, $shadowRow)
+                $sb = [System.Text.StringBuilder]::new($sEnd - $sStart + 1)
+                for ($sc = $sStart; $sc -le $sEnd; $sc++) {
+                    [void]$sb.Append((& $shadowChar $sc $shadowRow))
+                }
+                Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+            }
         }
     }
 
