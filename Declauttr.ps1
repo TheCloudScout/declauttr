@@ -483,8 +483,46 @@ function Show-SessionPreview {
                 # arms $script:JumpSession; returning here closes the preview, and
                 # the picker (which checks $script:JumpSession right after the
                 # preview returns) exits too so main can hand off to claude.
+                #
+                # Build a plain-text snapshot of what's currently on screen — the
+                # picker rows with this preview box composited on top — so the
+                # jump popup's drop shadow dims the real text behind it, the way
+                # it does in the list view. ($leftBar/$title/$hint/$leftPad/etc.
+                # were just computed for this frame's render above.)
+                $snapshot = [System.Collections.Generic.List[string]]::new()
+                $lastRel  = ($boxTop - $BaseTop) + $contentH + 2
+                for ($i = 0; $i -le $lastRel; $i++) {
+                    $bg = if ($i -lt $BackgroundRows.Count) { [string]$BackgroundRows[$i] } else { '' }
+                    if ($bg.Length -lt $ScreenWidth) { $bg = $bg.PadRight($ScreenWidth) }
+                    elseif ($bg.Length -gt $ScreenWidth) { $bg = $bg.Substring(0, $ScreenWidth) }
+                    $snapshot.Add($bg)
+                }
+                $overlayRow = {
+                    param([int]$ScreenRow, [string]$Text)
+                    $rel = $ScreenRow - $BaseTop
+                    if ($rel -lt 0 -or $rel -ge $snapshot.Count) { return }
+                    $row    = $snapshot[$rel]
+                    $before = $row.Substring(0, [Math]::Min($boxLeft, $row.Length)).PadRight($boxLeft)
+                    $afterStart = $boxLeft + $Text.Length
+                    $after  = if ($afterStart -lt $row.Length) { $row.Substring($afterStart) } else { '' }
+                    $snapshot[$rel] = ($before + $Text + $after).PadRight($ScreenWidth).Substring(0, $ScreenWidth)
+                }
+                & $overlayRow $boxTop ('╔' + $leftBar + $title + $rightBar + '╗')
+                for ($r = 0; $r -lt $contentH; $r++) {
+                    if ($r -lt $headerH) {
+                        $bl = if ($r -lt $head.Count) { [string]$head[$r] } else { '' }
+                    } else {
+                        $bidx = $scrollTop + ($r - $headerH)
+                        $bl = if ($bidx -lt $body.Count) { [string]$body[$bidx] } else { '' }
+                    }
+                    if ($bl.Length -gt $contentW) { $bl = $bl.Substring(0, $contentW) }
+                    & $overlayRow ($boxTop + 1 + $r) ('║ ' + $bl.PadRight($contentW) + ' ║')
+                }
+                & $overlayRow ($boxTop + 1 + $contentH) ('╚' + $leftPad + $hint + $rightPad + '╝')
+
                 if (Invoke-JumpAttempt -Session $Session `
-                        -ScreenWidth $ScreenWidth -ScreenHeight $ScreenHeight -BaseTop $BaseTop) {
+                        -ScreenWidth $ScreenWidth -ScreenHeight $ScreenHeight -BaseTop $BaseTop `
+                        -BackgroundRows $snapshot.ToArray()) {
                     return
                 }
             }
