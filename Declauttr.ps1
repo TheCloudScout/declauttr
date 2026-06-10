@@ -416,7 +416,7 @@ function Show-SessionPreview {
 
         # Bottom border with embedded hint
         [Console]::SetCursorPosition($boxLeft, $boxTop + 1 + $contentH)
-        $hint = " SPACE/ESC close   ↑↓ PgUp/PgDn scroll   R rename "
+        $hint = " SPACE/ESC close   ↑↓ PgUp/PgDn scroll   R rename   J jump "
         if ($body.Count -gt $bodyH) {
             $shown = [Math]::Min($body.Count, $scrollTop + $bodyH)
             $hint += "[$($scrollTop + 1)-$shown/$($body.Count)] "
@@ -471,6 +471,16 @@ function Show-SessionPreview {
             'PageDown'  { $scrollTop = [Math]::Min($maxScroll, $scrollTop + $bodyH) }
             'Home'      { $scrollTop = 0 }
             'End'       { $scrollTop = $maxScroll }
+            'J' {
+                # Jump straight into this session. On confirm, Invoke-JumpAttempt
+                # arms $script:JumpSession; returning here closes the preview, and
+                # the picker (which checks $script:JumpSession right after the
+                # preview returns) exits too so main can hand off to claude.
+                if (Invoke-JumpAttempt -Session $Session `
+                        -ScreenWidth $ScreenWidth -ScreenHeight $ScreenHeight -BaseTop $BaseTop) {
+                    return
+                }
+            }
             'R' {
                 # Inline rename: edits the Title row in place. The current
                 # title is shown as a dim placeholder; the first keypress
