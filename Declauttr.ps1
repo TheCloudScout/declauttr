@@ -2211,13 +2211,23 @@ if ($List) {
     $deleted = Show-SessionPicker -Sessions $sessions
 
     if ($script:JumpSession) {
+        # cd into the session's directory before clearing the screen, so if the
+        # directory vanished in the brief window since it was validated, the
+        # error stays visible and we don't launch claude in the wrong directory.
+        # Set-Location only affects this pwsh process, so the parent shell's cwd
+        # is unchanged after claude exits.
+        try {
+            Set-Location -LiteralPath $script:JumpSession.Cwd -ErrorAction Stop
+        } catch {
+            Write-Host "Can't jump: $($_.Exception.Message)" -ForegroundColor Red
+            return
+        }
         Clear-Host
         Write-Host ("Resuming session {0}" -f $script:JumpSession.SessionId) -ForegroundColor DarkGray
         Write-Host ("  in {0}`n" -f $script:JumpSession.Cwd) -ForegroundColor DarkGray
-        # Set-Location only affects this pwsh process, so the parent shell's cwd
-        # is unchanged after claude exits. claude inherits the terminal.
-        Set-Location -LiteralPath $script:JumpSession.Cwd
-        & claude --resume $script:JumpSession.SessionId
+        & claude --resume "$($script:JumpSession.SessionId)"
+        # claude's exit code is intentionally not forwarded; the user is back at
+        # their shell prompt regardless of how claude exited.
         return
     }
 
