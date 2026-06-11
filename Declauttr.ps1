@@ -28,6 +28,13 @@
                                to a custom title — handy when the AI title
                                is already spot-on and you just want the
                                row to be flagged as a keeper.
+      J                        jump into the highlighted session — quit
+                               DeClauttR and resume it with
+                               `claude --resume`, after changing into the
+                               session's original working directory. Press J
+                               once for a confirmation popup, then J again to
+                               confirm; any other key cancels. Works from the
+                               list and from inside the preview.
       X                        toggle the current row's checkbox
       A                        toggle all rows
       R                        re-apply the "recommended for removal"
@@ -150,6 +157,27 @@ function Get-SessionMetadata {
         Title           = if ($customTitle) { $customTitle } elseif ($aiTitle) { $aiTitle } else { $null }
         HasCustomTitle  = [bool]$customTitle
     }
+}
+
+function Get-SessionCwd {
+    param(
+        [Parameter(Mandatory)] [string]$Path
+    )
+
+    # Recover the session's real working directory from the transcript. Every
+    # user/assistant line records a "cwd" field with the absolute path; the
+    # encoded project-folder name can't be decoded reliably (a literal dash in a
+    # folder name is indistinguishable from a path separator), so we read the
+    # cwd straight from the file. Returns the first value found, or $null.
+    foreach ($line in [System.IO.File]::ReadLines($Path)) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        if (-not $line.Contains('"cwd"')) { continue }
+        try {
+            $obj = $line | ConvertFrom-Json -ErrorAction Stop
+        } catch { continue }
+        if ($obj.cwd) { return [string]$obj.cwd }
+    }
+    return $null
 }
 
 function Set-SessionCustomTitle {
@@ -395,7 +423,7 @@ function Show-SessionPreview {
 
         # Bottom border with embedded hint
         [Console]::SetCursorPosition($boxLeft, $boxTop + 1 + $contentH)
-        $hint = " SPACE/ESC close   ↑↓ PgUp/PgDn scroll   R rename "
+        $hint = " SPACE/ESC close   ↑↓ PgUp/PgDn scroll   R rename   J jump "
         if ($body.Count -gt $bodyH) {
             $shown = [Math]::Min($body.Count, $scrollTop + $bodyH)
             $hint += "[$($scrollTop + 1)-$shown/$($body.Count)] "
@@ -450,6 +478,54 @@ function Show-SessionPreview {
             'PageDown'  { $scrollTop = [Math]::Min($maxScroll, $scrollTop + $bodyH) }
             'Home'      { $scrollTop = 0 }
             'End'       { $scrollTop = $maxScroll }
+            'J' {
+                # Jump straight into this session. On confirm, Invoke-JumpAttempt
+                # arms $script:JumpSession; returning here closes the preview, and
+                # the picker (which checks $script:JumpSession right after the
+                # preview returns) exits too so main can hand off to claude.
+                #
+                # Build a plain-text snapshot of what's currently on screen — the
+                # picker rows with this preview box composited on top — so the
+                # jump popup's drop shadow dims the real text behind it, the way
+                # it does in the list view. ($leftBar/$title/$hint/$leftPad/etc.
+                # were just computed for this frame's render above.)
+                $snapshot = [System.Collections.Generic.List[string]]::new()
+                $lastRel  = ($boxTop - $BaseTop) + $contentH + 2
+                for ($i = 0; $i -le $lastRel; $i++) {
+                    $bg = if ($i -lt $BackgroundRows.Count) { [string]$BackgroundRows[$i] } else { '' }
+                    if ($bg.Length -lt $ScreenWidth) { $bg = $bg.PadRight($ScreenWidth) }
+                    elseif ($bg.Length -gt $ScreenWidth) { $bg = $bg.Substring(0, $ScreenWidth) }
+                    $snapshot.Add($bg)
+                }
+                $overlayRow = {
+                    param([int]$ScreenRow, [string]$Text)
+                    $rel = $ScreenRow - $BaseTop
+                    if ($rel -lt 0 -or $rel -ge $snapshot.Count) { return }
+                    $row    = $snapshot[$rel]
+                    $before = $row.Substring(0, [Math]::Min($boxLeft, $row.Length)).PadRight($boxLeft)
+                    $afterStart = $boxLeft + $Text.Length
+                    $after  = if ($afterStart -lt $row.Length) { $row.Substring($afterStart) } else { '' }
+                    $snapshot[$rel] = ($before + $Text + $after).PadRight($ScreenWidth).Substring(0, $ScreenWidth)
+                }
+                & $overlayRow $boxTop ('╔' + $leftBar + $title + $rightBar + '╗')
+                for ($r = 0; $r -lt $contentH; $r++) {
+                    if ($r -lt $headerH) {
+                        $bl = if ($r -lt $head.Count) { [string]$head[$r] } else { '' }
+                    } else {
+                        $bidx = $scrollTop + ($r - $headerH)
+                        $bl = if ($bidx -lt $body.Count) { [string]$body[$bidx] } else { '' }
+                    }
+                    if ($bl.Length -gt $contentW) { $bl = $bl.Substring(0, $contentW) }
+                    & $overlayRow ($boxTop + 1 + $r) ('║ ' + $bl.PadRight($contentW) + ' ║')
+                }
+                & $overlayRow ($boxTop + 1 + $contentH) ('╚' + $leftPad + $hint + $rightPad + '╝')
+
+                if (Invoke-JumpAttempt -Session $Session `
+                        -ScreenWidth $ScreenWidth -ScreenHeight $ScreenHeight -BaseTop $BaseTop `
+                        -BackgroundRows $snapshot.ToArray()) {
+                    return
+                }
+            }
             'R' {
                 # Inline rename: edits the Title row in place. The current
                 # title is shown as a dim placeholder; the first keypress
@@ -824,6 +900,191 @@ function Show-ConfirmDelete {
             }
         }
     }
+}
+
+function Show-MessageBox {
+    # A one-shot centered popup: draws a bordered box with a title, a few lines
+    # of body text, and a hint baked into the bottom border, using the same
+    # drop-shadow convention as the other overlays. Draws once, waits for a
+    # single key, and returns that ConsoleKeyInfo. Callers repaint behind it.
+    param(
+        [Parameter(Mandatory)] [string]$Title,
+        [string[]]$Lines = @(),
+        [Parameter(Mandatory)] [string]$Hint,
+        [Parameter(Mandatory)] [int]$ScreenWidth,
+        [Parameter(Mandatory)] [int]$ScreenHeight,
+        [Parameter(Mandatory)] [int]$BaseTop,
+        [string[]]$BackgroundRows = @(),
+        [string]$AccentColor = 'White'
+    )
+
+    $boxW = [Math]::Min(70, $ScreenWidth - 6)
+    if ($boxW -lt 40) { $boxW = [Math]::Max(30, $ScreenWidth - 4) }
+    $contentW = $boxW - 4
+
+    # One row per line plus a blank pad row above and below.
+    $contentH = $Lines.Count + 2
+    $boxH = $contentH + 2
+    if ($boxH -gt ($ScreenHeight - 3)) {
+        $boxH = $ScreenHeight - 3
+        $contentH = $boxH - 2
+    }
+
+    $boxLeft = [int](($ScreenWidth - $boxW) / 2)
+    $boxTop  = $BaseTop + [Math]::Max(0, [int]((($ScreenHeight - 2) - $boxH) / 2))
+
+    $boxBg    = 'DarkGray'
+    $borderFg = 'White'
+    $hintFg   = 'Black'
+    $hintBg   = 'Gray'
+
+    $shadowChar = {
+        param([int]$Col, [int]$Row)
+        $rel = $Row - $BaseTop
+        if ($rel -lt 0 -or $rel -ge $BackgroundRows.Count) { return ' ' }
+        $t = $BackgroundRows[$rel]
+        if ($Col -lt 0 -or $Col -ge $t.Length) { return ' ' }
+        $c = $t[$Col]
+        if ([int][char]$c -lt 32) { return ' ' }
+        return [string]$c
+    }
+
+    # Title bar
+    [Console]::SetCursorPosition($boxLeft, $boxTop)
+    if ($Title.Length -gt ($boxW - 2)) { $Title = $Title.Substring(0, $boxW - 2) }
+    $padBars  = $boxW - 2 - $Title.Length
+    $leftBar  = '═' * [int]($padBars / 2)
+    $rightBar = '═' * ($padBars - $leftBar.Length)
+    Write-Host ('╔' + $leftBar + $Title + $rightBar + '╗') `
+        -ForegroundColor $borderFg -BackgroundColor $boxBg -NoNewline
+
+    # Content rows (blank pad, lines, blank pad), clamped/filled to contentH.
+    $rendered = @('') + $Lines + @('')
+    for ($r = 0; $r -lt $contentH; $r++) {
+        [Console]::SetCursorPosition($boxLeft, $boxTop + 1 + $r)
+        $line = [string]$rendered[$r]
+        if ($line.Length -gt $contentW) { $line = $line.Substring(0, $contentW) }
+        Write-Host '║ ' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+        Write-Host $line.PadRight($contentW) -NoNewline -ForegroundColor $AccentColor -BackgroundColor $boxBg
+        Write-Host ' ║' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+    }
+
+    # Bottom border with embedded hint
+    [Console]::SetCursorPosition($boxLeft, $boxTop + 1 + $contentH)
+    $h = $Hint
+    $hintMax = $boxW - 4
+    if ($h.Length -gt $hintMax) { $h = $h.Substring(0, $hintMax) }
+    $padBars2 = $boxW - 2 - $h.Length
+    $leftPad  = '═' * [int]($padBars2 / 2)
+    $rightPad = '═' * ($padBars2 - $leftPad.Length)
+    Write-Host '╚' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+    Write-Host $leftPad -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+    Write-Host $h -NoNewline -ForegroundColor $hintFg -BackgroundColor $hintBg
+    Write-Host $rightPad -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+    Write-Host '╝' -NoNewline -ForegroundColor $borderFg -BackgroundColor $boxBg
+
+    # Drop shadow — only when we have real background content to dim. Callers
+    # that can't supply what's actually on screen (the popup over the full-screen
+    # preview passes an empty array) skip it: a "shadow" of blank cells would
+    # paint black blocks over the underlying text instead of dimming it.
+    if ($BackgroundRows.Count -gt 0) {
+        for ($r = 1; $r -le ($contentH + 1); $r++) {
+            $sr = $boxTop + $r
+            if ($sr -ge $ScreenHeight) { break }
+            for ($dc = 0; $dc -lt 2; $dc++) {
+                $sc = $boxLeft + $boxW + $dc
+                if ($sc -ge $ScreenWidth) { break }
+                [Console]::SetCursorPosition($sc, $sr)
+                Write-Host (& $shadowChar $sc $sr) -NoNewline -ForegroundColor DarkGray
+            }
+        }
+        $shadowRow = $boxTop + $contentH + 2
+        if ($shadowRow -lt $ScreenHeight) {
+            $sStart = [Math]::Min($ScreenWidth - 1, $boxLeft + 2)
+            $sEnd   = [Math]::Min($ScreenWidth - 1, $boxLeft + $boxW + 1)
+            if ($sEnd -ge $sStart) {
+                [Console]::SetCursorPosition($sStart, $shadowRow)
+                $sb = [System.Text.StringBuilder]::new($sEnd - $sStart + 1)
+                for ($sc = $sStart; $sc -le $sEnd; $sc++) {
+                    [void]$sb.Append((& $shadowChar $sc $shadowRow))
+                }
+                Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+            }
+        }
+    }
+
+    try { [Console]::SetCursorPosition(0, [Math]::Min($ScreenHeight - 1, $boxTop + $contentH + 3)) } catch {}
+
+    return [Console]::ReadKey($true)
+}
+
+function Invoke-JumpAttempt {
+    # Validates that the highlighted session can be resumed and, if so, asks for
+    # a single-key confirmation. On confirm it arms the jump by setting
+    # $script:JumpSession (which main reads to perform the cd + claude --resume
+    # handoff) and returns $true so the caller can exit its loop. Returns $false
+    # when the jump can't proceed or the user cancels — the caller stays put.
+    param(
+        [Parameter(Mandatory)] [object]$Session,
+        [Parameter(Mandatory)] [int]$ScreenWidth,
+        [Parameter(Mandatory)] [int]$ScreenHeight,
+        [Parameter(Mandatory)] [int]$BaseTop,
+        [string[]]$BackgroundRows = @()
+    )
+
+    try {
+        $cwd = Get-SessionCwd -Path $Session.Path
+    } catch {
+        # Transcript unreadable (e.g. deleted in the window since the scan) —
+        # treat as "no working directory" so we refuse and stay (per the design)
+        # instead of letting a raw error escape the TUI.
+        $cwd = $null
+    }
+
+    $err = $null
+    if (-not $cwd) {
+        $err = 'No working directory was recorded for this session, so it cannot be resumed.'
+    } elseif (-not (Test-Path -LiteralPath $cwd)) {
+        $err = "That session's working directory no longer exists:  $cwd"
+    } elseif (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
+        $err = 'The claude CLI was not found on your PATH, so DeClauttR cannot launch it.'
+    }
+
+    if ($err) {
+        $wrapped = @(Format-Wrap -Text $err -Width ([Math]::Min(64, $ScreenWidth - 10)))
+        [void](Show-MessageBox -Title ' Cannot jump ' -Lines $wrapped `
+            -Hint ' press any key to go back ' `
+            -ScreenWidth $ScreenWidth -ScreenHeight $ScreenHeight -BaseTop $BaseTop `
+            -BackgroundRows $BackgroundRows -AccentColor 'Yellow')
+        return $false
+    }
+
+    $label = if ($Session.Title) { $Session.Title } else { $Session.Snippet }
+    $maxLabel = [Math]::Max(10, [Math]::Min(60, $ScreenWidth - 12))
+    if ($label.Length -gt $maxLabel) { $label = $label.Substring(0, $maxLabel - 1) + '…' }
+
+    # Wrap the question to the box width (like the error popup above) instead of
+    # hardcoding a line break, so it stays on one line when it fits and wraps at
+    # a word boundary — not mid-phrase — on a narrow terminal.
+    $lines  = @(Format-Wrap -Text 'Leave DeClauttR and jump straight back into this conversation?' `
+            -Width ([Math]::Min(64, $ScreenWidth - 10)))
+    $lines += ''
+    $lines += "Project:  $($Session.Project)"
+    $lines += "Title:    $label"
+
+    $key = Show-MessageBox -Title ' Jump to session ' -Lines $lines `
+        -Hint ' J again to jump — any other key cancels ' `
+        -ScreenWidth $ScreenWidth -ScreenHeight $ScreenHeight -BaseTop $BaseTop `
+        -BackgroundRows $BackgroundRows -AccentColor 'White'
+
+    if ($key.Key -eq 'J') {
+        $script:JumpSession = [pscustomobject]@{
+            SessionId = $Session.Uuid
+            Cwd       = $cwd
+        }
+        return $true
+    }
+    return $false
 }
 
 function Show-SearchPrompt {
@@ -1656,6 +1917,10 @@ function Show-SessionPicker {
     # multiple DEL cycles so the caller can print a final summary on exit.
     $deletedList = [System.Collections.Generic.List[object]]::new()
 
+    # Reset any stale jump signal so a leftover value can't trigger a silent
+    # exit on the first keypress. Invoke-JumpAttempt (J / preview) re-arms it.
+    $script:JumpSession = $null
+
     try {
         while ($true) {
             if ($cursor -ne $lastCursor) {
@@ -1695,6 +1960,21 @@ function Show-SessionPicker {
                                 -ScreenWidth $width -ScreenHeight $height -BaseTop $origTop `
                                 -BackgroundRows $rowBuffer.ToArray() `
                                 -Query $searchQuery -CaseSensitive $searchCaseSensitive
+                            if ($script:JumpSession) { return $deletedList }
+                            [Console]::Clear()
+                            $origTop = [Console]::CursorTop
+                            for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
+                            $marqueeOffset = 0
+                            $cursorIdleTimer.Restart()
+                        }
+                    }
+                    'J'         {
+                        if ($activeSessions.Count -gt 0) {
+                            $jumped = Invoke-JumpAttempt -Session $activeSessions[$cursor] `
+                                -ScreenWidth $width -ScreenHeight $height -BaseTop $origTop `
+                                -BackgroundRows $rowBuffer.ToArray()
+                            if ($jumped) { return $deletedList }
+                            # Cancelled or refused: repaint the picker behind the closed popup.
                             [Console]::Clear()
                             $origTop = [Console]::CursorTop
                             for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
@@ -1836,7 +2116,7 @@ function Show-SessionPicker {
             if ($searchQuery) {
                 # Header split into three segments so the "F clear filter" pill
                 # can pop in a contrasting yellow/black against the cyan bar.
-                $headLeft  = " ↑↓ NAV   SPACE preview   X toggle   A all   R recommended  "
+                $headLeft  = " ↑↓ NAV   SPACE preview   J jump   X toggle   A all   R recommended  "
                 $headPill  = " F clear filter: `"$searchQuery`" "
                 $headRight = "  DEL delete   ? about   ESC cancel    [$checkedCount/$($activeSessions.Count) of $($Sessions.Count) selected]"
                 $combined  = $headLeft + $headPill + $headRight
@@ -1851,7 +2131,7 @@ function Show-SessionPicker {
                 Write-Host ($headRight + (' ' * $padLen)) -ForegroundColor Black -BackgroundColor Cyan
                 $rowBuffer.Add($headLeft + $headPill + $headRight + (' ' * $padLen))
             } else {
-                $header = " ↑↓ NAV   SPACE preview   X toggle   A all   R recommended   F filter   DEL delete   ? about   ESC cancel    [$checkedCount/$($activeSessions.Count) selected]"
+                $header = " ↑↓ NAV   SPACE preview   J jump   X toggle   A all   R recommended   F filter   DEL delete   ? about   ESC cancel    [$checkedCount/$($activeSessions.Count) selected]"
                 if ($header.Length -gt $width) { $header = $header.Substring(0, $width) }
                 $headerText = $header.PadRight($width)
                 Write-Host $headerText -ForegroundColor Black -BackgroundColor Cyan
@@ -1956,6 +2236,14 @@ function Show-SessionPicker {
 
 # --- main ---
 
+# When this script is dot-sourced (e.g. by the tests in ./tests), load all the
+# function definitions above but skip running the interactive app.
+if ($MyInvocation.InvocationName -eq '.') { return }
+
+# Set when the user confirms a jump (J) in the picker or preview; main reads it
+# below to cd into the session's directory and resume it with claude.
+$script:JumpSession = $null
+
 Clear-Host
 
 if ($About) {
@@ -1979,6 +2267,28 @@ if ($List) {
     }
 
     $deleted = Show-SessionPicker -Sessions $sessions
+
+    if ($script:JumpSession) {
+        # cd into the session's directory before clearing the screen, so if the
+        # directory vanished in the brief window since it was validated, the
+        # error stays visible and we don't launch claude in the wrong directory.
+        # Set-Location only affects this pwsh process, so the parent shell's cwd
+        # is unchanged after claude exits.
+        try {
+            Set-Location -LiteralPath $script:JumpSession.Cwd -ErrorAction Stop
+        } catch {
+            Write-Host "Can't jump: $($_.Exception.Message)" -ForegroundColor Red
+            return
+        }
+        Clear-Host
+        Write-Host ("Resuming session {0}" -f $script:JumpSession.SessionId) -ForegroundColor DarkGray
+        Write-Host ("  in {0}`n" -f $script:JumpSession.Cwd) -ForegroundColor DarkGray
+        & claude --resume "$($script:JumpSession.SessionId)"
+        # claude's exit code is intentionally not forwarded; the user is back at
+        # their shell prompt regardless of how claude exited.
+        return
+    }
+
     if (-not $deleted -or $deleted.Count -eq 0) { return }
 
     Write-Host ''

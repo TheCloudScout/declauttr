@@ -39,6 +39,10 @@ Cross-platform: works on **macOS, Linux, and Windows** under PowerShell 7+ (`pws
   custom title without leaving DeClauttR — useful for promoting a spot-on
   AI-generated title to a custom one (so the row becomes a `!`-flagged
   keeper) or for relabelling a session into something you'll recognise later.
+- **Jump into a session**: press **J** (then **J** again to confirm) to leave
+  DeClauttR and drop straight back into the highlighted conversation via
+  `claude --resume`, with the working directory restored. Works from the list
+  and from inside the preview.
 - Safe by default: nothing is deleted without an explicit `yes` (case-insensitive) confirmation, and the picker stays open after a delete so you can keep pruning instead of being kicked back to the shell.
 
 ## Requirements
@@ -136,6 +140,7 @@ The picker is the default. Pass `-List` if you want plain text output instead.
 | Home / End | jump to top / bottom |
 | PgUp / PgDn | page up / down |
 | **Space** | open a preview overlay for the highlighted session — session details (project, UUID, title, timestamp, size) stay pinned at the top of the window while the message body scrolls. Drop-shadow renders the underlying picker text in dim grey, like a classic Turbo Vision dialog. Space/Esc to close, ↑↓/PgUp/PgDn to scroll, **R** to rename (see below). When a search filter is active (see **F** below), every occurrence of the search string is highlighted in the preview with a yellow background so you can scroll straight to the matches. |
+| **J** | jump into the highlighted session: quit DeClauttR and resume it with `claude --resume`, after changing into the session's original working directory (recovered from the transcript). Press **J** once for a confirmation popup, then **J** again to confirm — any other key cancels. Also available from inside the preview. If the directory no longer exists or `claude` isn't on your `PATH`, DeClauttR shows a brief notice and stays put. |
 | **X** | toggle the current row's checkbox |
 | **A** | toggle all (check all, or uncheck if everything was checked) |
 | **R** | re-apply the "recommended for removal" selection |
@@ -182,6 +187,20 @@ place: any prior `custom-title` entries are stripped and a single fresh one
 is appended. This is exactly the same on-disk format Claude uses when you
 run `/title` inside a session, so the new title also shows up in
 `claude --resume` and anywhere else Claude reads it.
+
+#### Jump into a session (J)
+
+Press **J** on the highlighted row — or **J** inside an open preview — to leave
+DeClauttR and resume that conversation. A small popup confirms *"Leave DeClauttR
+and jump straight back into this conversation?"*; press **J** again to confirm,
+or any other key to cancel. On confirm, DeClauttR changes into the session's
+original working directory (read from the transcript's recorded `cwd`, since the
+encoded project-folder name can't be decoded reliably) and runs
+`claude --resume <id>`, then exits so claude takes over the terminal. When you
+quit claude you're back at your shell, in the directory you started from.
+
+If the recorded working directory no longer exists, or the `claude` CLI isn't on
+your `PATH`, DeClauttR shows a brief notice and stays open instead of jumping.
 
 #### Content search (F)
 
