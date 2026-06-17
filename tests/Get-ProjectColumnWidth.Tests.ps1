@@ -17,22 +17,26 @@ function Assert-Equal {
     }
 }
 
-function New-Sessions { param([string[]]$Names) ,@($Names | ForEach-Object { [pscustomobject]@{ Project = $_ } }) }
+# The Project column gets half of the space left after the fixed columns
+# (overhead = 41): floor((ScreenWidth - 41) / 2), with a 10-char floor.
 
-# 1. All names shorter than the floor -> floor (10).
-Assert-Equal 10 (Get-ProjectColumnWidth -Sessions (New-Sessions @('abc','de')) -ScreenWidth 120) 'short names clamp up to floor'
+# 1. Wide screen -> even split. floor((120 - 41) / 2) = 39.
+Assert-Equal 39 (Get-ProjectColumnWidth -ScreenWidth 120) 'wide screen splits evenly'
 
-# 2. A normal name on a wide screen -> exact fit (longest name length).
-Assert-Equal 25 (Get-ProjectColumnWidth -Sessions (New-Sessions @('x','a-project-name-of-len-25!')) -ScreenWidth 120) 'normal name fits exactly'
+# 2. Odd remainder rounds the Project column down. floor((100 - 41) / 2) = 29.
+Assert-Equal 29 (Get-ProjectColumnWidth -ScreenWidth 100) 'odd remainder floors'
 
-# 3. A very long name -> capped at floor(width * 0.5).
-Assert-Equal 40 (Get-ProjectColumnWidth -Sessions (New-Sessions @(('z' * 200))) -ScreenWidth 80) 'long name capped at half width'
+# 3. Project width never exceeds the Title width by more than the parity bit.
+#    width 121: project = floor(80/2) = 40, title room = 121 - 41 - 40 = 40.
+$projColWidth = Get-ProjectColumnWidth -ScreenWidth 121
+Assert-Equal (121 - 41 - $projColWidth) $projColWidth 'project and title widths match'
 
-# 4. Empty list -> floor (10).
-Assert-Equal 10 (Get-ProjectColumnWidth -Sessions @() -ScreenWidth 120) 'empty list -> floor'
+# 4. Narrow screen where the split would drop below the floor -> floor (10).
+#    floor((50 - 41) / 2) = 4 -> clamped to 10.
+Assert-Equal 10 (Get-ProjectColumnWidth -ScreenWidth 50) 'split below floor clamps up'
 
-# 5. Very narrow screen where cap < floor -> floor (10).
-Assert-Equal 10 (Get-ProjectColumnWidth -Sessions (New-Sessions @(('z' * 50))) -ScreenWidth 14) 'cap below floor -> floor'
+# 5. Very narrow screen (negative split) -> floor (10).
+Assert-Equal 10 (Get-ProjectColumnWidth -ScreenWidth 14) 'tiny screen clamps to floor'
 
 if ($script:failures -gt 0) { Write-Host "`n$($script:failures) failure(s)." -ForegroundColor Red; exit 1 }
 Write-Host "`nAll Get-ProjectColumnWidth tests passed." -ForegroundColor Green
