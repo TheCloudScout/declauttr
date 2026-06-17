@@ -197,15 +197,6 @@ in yellow:
 
 ![Delete confirmation overlay](img/screenshot-confirm-delete.jpg)
 
-### Tune the snippet length
-
-```powershell
-./Declauttr.ps1 -SnippetLength 250
-```
-
-Affects how much of the first user message is shown in list mode (interactive
-mode always uses the title, falling back to a truncated snippet).
-
 ### Point at a different Claude root (rare)
 
 ```powershell

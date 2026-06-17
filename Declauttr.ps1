@@ -67,10 +67,6 @@
 
     Works on Windows, macOS, and Linux under PowerShell 7+ (pwsh).
 
-.PARAMETER SnippetLength
-    Maximum characters of the user-message preview in list mode.
-    Default 400. Wrapped to terminal width.
-
 .PARAMETER ProjectsRoot
     Override the Claude projects directory. Defaults to ~/.claude/projects.
 
@@ -91,7 +87,6 @@
 
 [CmdletBinding()]
 param(
-    [int]$SnippetLength = 400,
     [string]$ProjectsRoot = (Join-Path $HOME '.claude' 'projects'),
     [string]$Project,
     [switch]$About
@@ -2257,7 +2252,7 @@ if (-not (Test-Path $ProjectsRoot)) {
     exit 1
 }
 
-$sessions = Get-AllSessions -Root $ProjectsRoot -ProjectFilter $Project -SnippetMax $SnippetLength
+$sessions = Get-AllSessions -Root $ProjectsRoot -ProjectFilter $Project
 
 if ($sessions.Count -eq 0) {
     Write-Host 'No sessions found.' -ForegroundColor Yellow
