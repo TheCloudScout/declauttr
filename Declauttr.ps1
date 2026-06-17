@@ -1968,6 +1968,21 @@ function Show-SessionPicker {
 
             if (-not $needRedraw) {
                 if (-not [Console]::KeyAvailable) {
+                    # No native resize event exists in .NET Console, so detect a
+                    # window resize by polling here and re-flow the whole list.
+                    $curW = try { [Console]::WindowWidth }  catch { $width }
+                    $curH = try { [Console]::WindowHeight } catch { $height }
+                    if (($curW -ge 60 -and $curW -ne $width) -or ($curH -ge 10 -and $curH -ne $height)) {
+                        $width    = $curW
+                        $height   = $curH
+                        $viewport = [Math]::Min($activeSessions.Count, [Math]::Max(5, $height - $reserved))
+                        if ($cursor -ge $top + $viewport) { $top = [Math]::Max(0, $cursor - $viewport + 1) }
+                        [Console]::Clear()
+                        $origTop = [Console]::CursorTop
+                        for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
+                        $needRedraw = $true
+                        continue
+                    }
                     Start-Sleep -Milliseconds 25
                     continue
                 }
