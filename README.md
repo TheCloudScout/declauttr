@@ -100,6 +100,10 @@ function declauttr { & "C:\path\to\declauttr\Declauttr.ps1" @args }
 
 ### Interactive picker
 
+The full-screen checkbox picker is the default view.
+
+![Interactive picker — grid view](img/screenshot-list-view.jpg)
+
 > **Project names use hyphens, not slashes.** Claude stores each session
 > under a directory whose name is the original working directory with
 > path separators (`/` on macOS/Linux, `\` on Windows) replaced by `-`.
