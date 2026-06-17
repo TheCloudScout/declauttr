@@ -1871,6 +1871,32 @@ function Write-SessionsList {
     Write-Host ("Total: {0} sessions, {1:N1} MB" -f $Sessions.Count, ($totalBytes / 1MB)) -ForegroundColor Green
 }
 
+function Get-ProjectColumnWidth {
+    # Width for the picker's Project column: wide enough for the longest project
+    # name present, but never less than a 10-char floor (so the "Project" header
+    # label fits) nor more than half the screen (so the Title column keeps its
+    # share). Computed from the active session set, not per visible row, so the
+    # column stays put while scrolling.
+    param(
+        [Parameter(Mandatory)] [System.Collections.IList]$Sessions,
+        [Parameter(Mandatory)] [int]$ScreenWidth
+    )
+
+    $floor = 10
+    $cap   = [int][Math]::Floor($ScreenWidth * 0.5)
+    if ($cap -lt $floor) { return $floor }
+
+    $longest = 0
+    foreach ($s in $Sessions) {
+        $len = "$($s.Project)".Length
+        if ($len -gt $longest) { $longest = $len }
+    }
+
+    if ($longest -lt $floor) { return $floor }
+    if ($longest -gt $cap)   { return $cap }
+    return $longest
+}
+
 function Show-SessionPicker {
     param(
         [Parameter(Mandatory)] [System.Collections.IList]$Sessions
