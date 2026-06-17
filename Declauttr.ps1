@@ -65,8 +65,6 @@
       * Yellow `↑` / `↓` indicators appear at the top-left and bottom-left
         of the viewport when there are rows above or below it.
 
-    Use -List to print a plain, non-interactive listing instead.
-
     Works on Windows, macOS, and Linux under PowerShell 7+ (pwsh).
 
 .PARAMETER SnippetLength
@@ -79,9 +77,6 @@
 .PARAMETER Project
     Filter to project directory names matching this substring.
 
-.PARAMETER List
-    Print a plain listing of sessions instead of opening the interactive picker.
-
 .PARAMETER About
     Render a clean, static About screen (logo + tagline + credits) and exit.
     Intended for taking screenshots — no title bar text, no "press any key"
@@ -89,9 +84,6 @@
 
 .EXAMPLE
     ./Declauttr.ps1
-
-.EXAMPLE
-    ./Declauttr.ps1 -List
 
 .EXAMPLE
     ./Declauttr.ps1 -Project myrepo
@@ -102,7 +94,6 @@ param(
     [int]$SnippetLength = 400,
     [string]$ProjectsRoot = (Join-Path $HOME '.claude' 'projects'),
     [string]$Project,
-    [switch]$List,
     [switch]$About
 )
 
@@ -1835,42 +1826,6 @@ function Get-AllSessions {
     return ,$result
 }
 
-function Write-SessionsList {
-    param(
-        [Parameter(Mandatory)] [System.Collections.IList]$Sessions,
-        [int]$SnippetMax = 400
-    )
-
-    $consoleWidth = try { [Console]::WindowWidth } catch { 100 }
-    if (-not $consoleWidth -or $consoleWidth -lt 40) { $consoleWidth = 100 }
-    $wrapWidth = $consoleWidth - 1
-    $indent    = '     '
-
-    $byProject = $Sessions | Group-Object Project | Sort-Object Name
-    $totalBytes = 0L
-
-    foreach ($g in $byProject) {
-        $totalBytes += ($g.Group | Measure-Object SizeBytes -Sum).Sum
-        Write-Host ''
-        Write-Host "=== $($g.Name) ($($g.Count) sessions) ===" -ForegroundColor DarkCyan
-        foreach ($s in $g.Group) {
-            $ts = $s.Timestamp.ToString('yyyy-MM-dd HH:mm')
-            Write-Host ("  {0}  " -f $ts) -NoNewline
-            Write-Host $s.Uuid -ForegroundColor Yellow -NoNewline
-            Write-Host "  $($s.SizeFormatted)"
-            if ($s.Title) {
-                $titleColor = if ($s.HasCustomTitle) { 'DarkCyan' } else { 'White' }
-                Write-Host ($indent + $s.Title) -ForegroundColor $titleColor
-            }
-            foreach ($wrapped in (Format-Wrap -Text $s.Snippet -Width $wrapWidth -Indent $indent)) {
-                Write-Host $wrapped -ForegroundColor DarkGray
-            }
-        }
-    }
-    Write-Host ''
-    Write-Host ("Total: {0} sessions, {1:N1} MB" -f $Sessions.Count, ($totalBytes / 1MB)) -ForegroundColor Green
-}
-
 function Get-ProjectColumnWidth {
     # Width for the picker's Project column: wide enough for the longest project
     # name present, but never less than a 10-char floor (so the "Project" header
@@ -2304,44 +2259,40 @@ if (-not (Test-Path $ProjectsRoot)) {
 
 $sessions = Get-AllSessions -Root $ProjectsRoot -ProjectFilter $Project -SnippetMax $SnippetLength
 
-if ($List) {
-    Write-SessionsList -Sessions $sessions -SnippetMax $SnippetLength
-} else {
-    if ($sessions.Count -eq 0) {
-        Write-Host 'No sessions found.' -ForegroundColor Yellow
-        return
-    }
-
-    $deleted = Show-SessionPicker -Sessions $sessions
-
-    if ($script:JumpSession) {
-        # cd into the session's directory before clearing the screen, so if the
-        # directory vanished in the brief window since it was validated, the
-        # error stays visible and we don't launch claude in the wrong directory.
-        # Set-Location only affects this pwsh process, so the parent shell's cwd
-        # is unchanged after claude exits.
-        try {
-            Set-Location -LiteralPath $script:JumpSession.Cwd -ErrorAction Stop
-        } catch {
-            Write-Host "Can't jump: $($_.Exception.Message)" -ForegroundColor Red
-            return
-        }
-        Clear-Host
-        Write-Host ("Resuming session {0}" -f $script:JumpSession.SessionId) -ForegroundColor DarkGray
-        Write-Host ("  in {0}`n" -f $script:JumpSession.Cwd) -ForegroundColor DarkGray
-        & claude --resume "$($script:JumpSession.SessionId)"
-        # claude's exit code is intentionally not forwarded; the user is back at
-        # their shell prompt regardless of how claude exited.
-        return
-    }
-
-    if (-not $deleted -or $deleted.Count -eq 0) { return }
-
-    Write-Host ''
-    foreach ($s in $deleted) {
-        Write-Host "  deleted $($s.Uuid)" -ForegroundColor Green
-    }
-    $totalKb = ($deleted | Measure-Object SizeBytes -Sum).Sum / 1KB
-    Write-Host ''
-    Write-Host ("  total: {0} session(s), {1:N1} KB freed" -f $deleted.Count, $totalKb) -ForegroundColor DarkGray
+if ($sessions.Count -eq 0) {
+    Write-Host 'No sessions found.' -ForegroundColor Yellow
+    return
 }
+
+$deleted = Show-SessionPicker -Sessions $sessions
+
+if ($script:JumpSession) {
+    # cd into the session's directory before clearing the screen, so if the
+    # directory vanished in the brief window since it was validated, the
+    # error stays visible and we don't launch claude in the wrong directory.
+    # Set-Location only affects this pwsh process, so the parent shell's cwd
+    # is unchanged after claude exits.
+    try {
+        Set-Location -LiteralPath $script:JumpSession.Cwd -ErrorAction Stop
+    } catch {
+        Write-Host "Can't jump: $($_.Exception.Message)" -ForegroundColor Red
+        return
+    }
+    Clear-Host
+    Write-Host ("Resuming session {0}" -f $script:JumpSession.SessionId) -ForegroundColor DarkGray
+    Write-Host ("  in {0}`n" -f $script:JumpSession.Cwd) -ForegroundColor DarkGray
+    & claude --resume "$($script:JumpSession.SessionId)"
+    # claude's exit code is intentionally not forwarded; the user is back at
+    # their shell prompt regardless of how claude exited.
+    return
+}
+
+if (-not $deleted -or $deleted.Count -eq 0) { return }
+
+Write-Host ''
+foreach ($s in $deleted) {
+    Write-Host "  deleted $($s.Uuid)" -ForegroundColor Green
+}
+$totalKb = ($deleted | Measure-Object SizeBytes -Sum).Sum / 1KB
+Write-Host ''
+Write-Host ("  total: {0} session(s), {1:N1} KB freed" -f $deleted.Count, $totalKb) -ForegroundColor DarkGray
