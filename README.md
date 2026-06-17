@@ -23,10 +23,8 @@ Cross-platform: works on **macOS, Linux, and Windows** under PowerShell 7+ (`pws
   - size on disk
   - session **title** (custom title set via `/title`, or the AI-generated one)
   - first real user prompt, word-wrapped to the terminal width
-- Two display modes:
-  - **Interactive picker** (default) — full-screen checkbox TUI with arrow-key
+- **Interactive picker** — full-screen checkbox TUI with arrow-key
     navigation, viewport scrolling, and a confirmation step before any file is touched.
-  - **List mode** (`-List`) — grouped per project, scroll-friendly text output.
 - **Auto-recommends** likely-disposable sessions and pre-checks them, including:
   - sessions with no real user message (empty/aborted starts)
   - sessions under 20 KB
@@ -94,34 +92,6 @@ function declauttr { & "C:\path\to\declauttr\Declauttr.ps1" @args }
 ./Declauttr.ps1
 ```
 
-### List every session, grouped per project
-
-```powershell
-./Declauttr.ps1 -List
-```
-
-Output looks like:
-
-```
-=== -Users-koos-Repos-myrepo (7 sessions) ===
-  2026-05-26 15:49  f870f835-0044-4439-b510-e0960748d4b1   2,139.0 KB
-     Refactor auth middleware
-     I want to refactor the auth middleware so that token validation happens
-     before the rate limiter instead of after, since invalid tokens are…
-  2026-05-26 15:34  a09f73dc-e060-4a6b-b741-51100cb08a5b      17.2 KB
-     (no user message found)
-```
-
-> **Project names use hyphens, not slashes.** Claude stores each session
-> under a directory whose name is the original working directory with
-> path separators (`/` on macOS/Linux, `\` on Windows) replaced by `-`.
-> So your checkout at `/Users/koos/Repos/myrepo` shows up as
-> `-Users-koos-Repos-myrepo` both here and in the interactive picker's
-> "Project" column. DeClauttR shows the name as Claude stored it rather
-> than trying to decode the hyphens — `-` is also a valid character in
-> folder names (`my-repo` would be indistinguishable from a path
-> boundary), so the raw encoded form is the only unambiguous one.
-
 ### Filter to one project (substring match)
 
 ```powershell
@@ -130,9 +100,19 @@ Output looks like:
 
 ### Interactive picker
 
-The picker is the default. Pass `-List` if you want plain text output instead.
+The full-screen checkbox picker is the default view.
 
-![Interactive picker — list view](img/screenshot-list-view.jpg)
+![Interactive picker — grid view](img/screenshot-list-view.jpg)
+
+> **Project names use hyphens, not slashes.** Claude stores each session
+> under a directory whose name is the original working directory with
+> path separators (`/` on macOS/Linux, `\` on Windows) replaced by `-`.
+> So your checkout at `/Users/koos/Repos/myrepo` shows up as
+> `-Users-koos-Repos-myrepo` in the interactive picker's "Project" column.
+> DeClauttR shows the name as Claude stored it rather
+> than trying to decode the hyphens — `-` is also a valid character in
+> folder names (`my-repo` would be indistinguishable from a path
+> boundary), so the raw encoded form is the only unambiguous one.
 
 | Key | Action |
 |---|---|
@@ -220,15 +200,6 @@ in yellow:
 #### Delete confirmation (Del / Backspace)
 
 ![Delete confirmation overlay](img/screenshot-confirm-delete.jpg)
-
-### Tune the snippet length
-
-```powershell
-./Declauttr.ps1 -SnippetLength 250
-```
-
-Affects how much of the first user message is shown in list mode (interactive
-mode always uses the title, falling back to a truncated snippet).
 
 ### Point at a different Claude root (rare)
 

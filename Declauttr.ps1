@@ -65,22 +65,13 @@
       * Yellow `↑` / `↓` indicators appear at the top-left and bottom-left
         of the viewport when there are rows above or below it.
 
-    Use -List to print a plain, non-interactive listing instead.
-
     Works on Windows, macOS, and Linux under PowerShell 7+ (pwsh).
-
-.PARAMETER SnippetLength
-    Maximum characters of the user-message preview in list mode.
-    Default 400. Wrapped to terminal width.
 
 .PARAMETER ProjectsRoot
     Override the Claude projects directory. Defaults to ~/.claude/projects.
 
 .PARAMETER Project
     Filter to project directory names matching this substring.
-
-.PARAMETER List
-    Print a plain listing of sessions instead of opening the interactive picker.
 
 .PARAMETER About
     Render a clean, static About screen (logo + tagline + credits) and exit.
@@ -91,18 +82,13 @@
     ./Declauttr.ps1
 
 .EXAMPLE
-    ./Declauttr.ps1 -List
-
-.EXAMPLE
     ./Declauttr.ps1 -Project myrepo
 #>
 
 [CmdletBinding()]
 param(
-    [int]$SnippetLength = 400,
     [string]$ProjectsRoot = (Join-Path $HOME '.claude' 'projects'),
     [string]$Project,
-    [switch]$List,
     [switch]$About
 )
 
@@ -1835,40 +1821,30 @@ function Get-AllSessions {
     return ,$result
 }
 
-function Write-SessionsList {
+function Get-ProjectColumnWidth {
+    # Width for the picker's Project column: wide enough for the longest project
+    # name present, but never less than a 10-char floor (so the "Project" header
+    # label fits) nor more than half the screen (so the Title column keeps its
+    # share). Computed from the active session set, not per visible row, so the
+    # column stays put while scrolling.
     param(
         [Parameter(Mandatory)] [System.Collections.IList]$Sessions,
-        [int]$SnippetMax = 400
+        [Parameter(Mandatory)] [int]$ScreenWidth
     )
 
-    $consoleWidth = try { [Console]::WindowWidth } catch { 100 }
-    if (-not $consoleWidth -or $consoleWidth -lt 40) { $consoleWidth = 100 }
-    $wrapWidth = $consoleWidth - 1
-    $indent    = '     '
+    $floor = 10
+    $cap   = [int][Math]::Floor($ScreenWidth * 0.5)
+    if ($cap -lt $floor) { return $floor }
 
-    $byProject = $Sessions | Group-Object Project | Sort-Object Name
-    $totalBytes = 0L
-
-    foreach ($g in $byProject) {
-        $totalBytes += ($g.Group | Measure-Object SizeBytes -Sum).Sum
-        Write-Host ''
-        Write-Host "=== $($g.Name) ($($g.Count) sessions) ===" -ForegroundColor DarkCyan
-        foreach ($s in $g.Group) {
-            $ts = $s.Timestamp.ToString('yyyy-MM-dd HH:mm')
-            Write-Host ("  {0}  " -f $ts) -NoNewline
-            Write-Host $s.Uuid -ForegroundColor Yellow -NoNewline
-            Write-Host "  $($s.SizeFormatted)"
-            if ($s.Title) {
-                $titleColor = if ($s.HasCustomTitle) { 'DarkCyan' } else { 'White' }
-                Write-Host ($indent + $s.Title) -ForegroundColor $titleColor
-            }
-            foreach ($wrapped in (Format-Wrap -Text $s.Snippet -Width $wrapWidth -Indent $indent)) {
-                Write-Host $wrapped -ForegroundColor DarkGray
-            }
-        }
+    $longest = 0
+    foreach ($s in $Sessions) {
+        $len = "$($s.Project)".Length
+        if ($len -gt $longest) { $longest = $len }
     }
-    Write-Host ''
-    Write-Host ("Total: {0} sessions, {1:N1} MB" -f $Sessions.Count, ($totalBytes / 1MB)) -ForegroundColor Green
+
+    if ($longest -lt $floor) { return $floor }
+    if ($longest -gt $cap)   { return $cap }
+    return $longest
 }
 
 function Show-SessionPicker {
@@ -1942,6 +1918,21 @@ function Show-SessionPicker {
 
             if (-not $needRedraw) {
                 if (-not [Console]::KeyAvailable) {
+                    # No native resize event exists in .NET Console, so detect a
+                    # window resize by polling here and re-flow the whole list.
+                    $curW = try { [Console]::WindowWidth }  catch { $width }
+                    $curH = try { [Console]::WindowHeight } catch { $height }
+                    if (($curW -ge 60 -and $curW -ne $width) -or ($curH -ge 10 -and $curH -ne $height)) {
+                        $width    = $curW
+                        $height   = $curH
+                        $viewport = [Math]::Min($activeSessions.Count, [Math]::Max(5, $height - $reserved))
+                        if ($cursor -ge $top + $viewport) { $top = [Math]::Max(0, $cursor - $viewport + 1) }
+                        [Console]::Clear()
+                        $origTop = [Console]::CursorTop
+                        for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
+                        $needRedraw = $true
+                        continue
+                    }
                     Start-Sleep -Milliseconds 25
                     continue
                 }
@@ -2113,6 +2104,11 @@ function Show-SessionPicker {
 
             $checkedCount = @($activeSessions | Where-Object Checked).Count
 
+            # Project column sized to the longest name in the active view (capped
+            # at half the screen). Recomputed each redraw, but the active set only
+            # changes on filter/resize, so it stays stable while scrolling.
+            $projColWidth = Get-ProjectColumnWidth -Sessions $activeSessions -ScreenWidth $width
+
             if ($searchQuery) {
                 # Header split into three segments so the "F clear filter" pill
                 # can pop in a contrasting yellow/black against the cyan bar.
@@ -2142,7 +2138,7 @@ function Show-SessionPicker {
                 '   ',
                 'Last changed    ',
                 ('Size'.PadLeft(11)),
-                ('Project'.PadRight(40)),
+                ('Project'.PadRight($projColWidth)),
                 'Title / first user message'
             $headerRoom = [Math]::Max(0, $width - 2)
             if ($colHeader.Length -gt $headerRoom) { $colHeader = $colHeader.Substring(0, $headerRoom) }
@@ -2177,8 +2173,8 @@ function Show-SessionPicker {
                 $flag = if ($s.HasCustomTitle) { '!' } else { ' ' }
                 $ts   = $s.Timestamp.ToString('yyyy-MM-dd HH:mm')
                 $proj = $s.Project
-                if ($proj.Length -gt 40) { $proj = '…' + $proj.Substring($proj.Length - 39) }
-                $prefix  = "$flag $mark  $ts  $($s.SizeFormatted)  $($proj.PadRight(40))  "
+                if ($proj.Length -gt $projColWidth) { $proj = '…' + $proj.Substring($proj.Length - ($projColWidth - 1)) }
+                $prefix  = "$flag $mark  $ts  $($s.SizeFormatted)  $($proj.PadRight($projColWidth))  "
                 $room    = [Math]::Max(10, $width - $prefix.Length - 1)
                 $fullDesc = if ($s.Title) { $s.Title } else { $s.Snippet }
                 if ($idx -eq $cursor -and $marqueeOffset -gt 0 -and $fullDesc.Length -gt $room) {
@@ -2256,46 +2252,42 @@ if (-not (Test-Path $ProjectsRoot)) {
     exit 1
 }
 
-$sessions = Get-AllSessions -Root $ProjectsRoot -ProjectFilter $Project -SnippetMax $SnippetLength
+$sessions = Get-AllSessions -Root $ProjectsRoot -ProjectFilter $Project
 
-if ($List) {
-    Write-SessionsList -Sessions $sessions -SnippetMax $SnippetLength
-} else {
-    if ($sessions.Count -eq 0) {
-        Write-Host 'No sessions found.' -ForegroundColor Yellow
-        return
-    }
-
-    $deleted = Show-SessionPicker -Sessions $sessions
-
-    if ($script:JumpSession) {
-        # cd into the session's directory before clearing the screen, so if the
-        # directory vanished in the brief window since it was validated, the
-        # error stays visible and we don't launch claude in the wrong directory.
-        # Set-Location only affects this pwsh process, so the parent shell's cwd
-        # is unchanged after claude exits.
-        try {
-            Set-Location -LiteralPath $script:JumpSession.Cwd -ErrorAction Stop
-        } catch {
-            Write-Host "Can't jump: $($_.Exception.Message)" -ForegroundColor Red
-            return
-        }
-        Clear-Host
-        Write-Host ("Resuming session {0}" -f $script:JumpSession.SessionId) -ForegroundColor DarkGray
-        Write-Host ("  in {0}`n" -f $script:JumpSession.Cwd) -ForegroundColor DarkGray
-        & claude --resume "$($script:JumpSession.SessionId)"
-        # claude's exit code is intentionally not forwarded; the user is back at
-        # their shell prompt regardless of how claude exited.
-        return
-    }
-
-    if (-not $deleted -or $deleted.Count -eq 0) { return }
-
-    Write-Host ''
-    foreach ($s in $deleted) {
-        Write-Host "  deleted $($s.Uuid)" -ForegroundColor Green
-    }
-    $totalKb = ($deleted | Measure-Object SizeBytes -Sum).Sum / 1KB
-    Write-Host ''
-    Write-Host ("  total: {0} session(s), {1:N1} KB freed" -f $deleted.Count, $totalKb) -ForegroundColor DarkGray
+if ($sessions.Count -eq 0) {
+    Write-Host 'No sessions found.' -ForegroundColor Yellow
+    return
 }
+
+$deleted = Show-SessionPicker -Sessions $sessions
+
+if ($script:JumpSession) {
+    # cd into the session's directory before clearing the screen, so if the
+    # directory vanished in the brief window since it was validated, the
+    # error stays visible and we don't launch claude in the wrong directory.
+    # Set-Location only affects this pwsh process, so the parent shell's cwd
+    # is unchanged after claude exits.
+    try {
+        Set-Location -LiteralPath $script:JumpSession.Cwd -ErrorAction Stop
+    } catch {
+        Write-Host "Can't jump: $($_.Exception.Message)" -ForegroundColor Red
+        return
+    }
+    Clear-Host
+    Write-Host ("Resuming session {0}" -f $script:JumpSession.SessionId) -ForegroundColor DarkGray
+    Write-Host ("  in {0}`n" -f $script:JumpSession.Cwd) -ForegroundColor DarkGray
+    & claude --resume "$($script:JumpSession.SessionId)"
+    # claude's exit code is intentionally not forwarded; the user is back at
+    # their shell prompt regardless of how claude exited.
+    return
+}
+
+if (-not $deleted -or $deleted.Count -eq 0) { return }
+
+Write-Host ''
+foreach ($s in $deleted) {
+    Write-Host "  deleted $($s.Uuid)" -ForegroundColor Green
+}
+$totalKb = ($deleted | Measure-Object SizeBytes -Sum).Sum / 1KB
+Write-Host ''
+Write-Host ("  total: {0} session(s), {1:N1} KB freed" -f $deleted.Count, $totalKb) -ForegroundColor DarkGray
