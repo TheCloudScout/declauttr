@@ -2139,6 +2139,11 @@ function Show-SessionPicker {
 
             $checkedCount = @($activeSessions | Where-Object Checked).Count
 
+            # Project column sized to the longest name in the active view (capped
+            # at half the screen). Recomputed each redraw, but the active set only
+            # changes on filter/resize, so it stays stable while scrolling.
+            $projColWidth = Get-ProjectColumnWidth -Sessions $activeSessions -ScreenWidth $width
+
             if ($searchQuery) {
                 # Header split into three segments so the "F clear filter" pill
                 # can pop in a contrasting yellow/black against the cyan bar.
@@ -2168,7 +2173,7 @@ function Show-SessionPicker {
                 '   ',
                 'Last changed    ',
                 ('Size'.PadLeft(11)),
-                ('Project'.PadRight(40)),
+                ('Project'.PadRight($projColWidth)),
                 'Title / first user message'
             $headerRoom = [Math]::Max(0, $width - 2)
             if ($colHeader.Length -gt $headerRoom) { $colHeader = $colHeader.Substring(0, $headerRoom) }
@@ -2203,8 +2208,8 @@ function Show-SessionPicker {
                 $flag = if ($s.HasCustomTitle) { '!' } else { ' ' }
                 $ts   = $s.Timestamp.ToString('yyyy-MM-dd HH:mm')
                 $proj = $s.Project
-                if ($proj.Length -gt 40) { $proj = '…' + $proj.Substring($proj.Length - 39) }
-                $prefix  = "$flag $mark  $ts  $($s.SizeFormatted)  $($proj.PadRight(40))  "
+                if ($proj.Length -gt $projColWidth) { $proj = '…' + $proj.Substring($proj.Length - ($projColWidth - 1)) }
+                $prefix  = "$flag $mark  $ts  $($s.SizeFormatted)  $($proj.PadRight($projColWidth))  "
                 $room    = [Math]::Max(10, $width - $prefix.Length - 1)
                 $fullDesc = if ($s.Title) { $s.Title } else { $s.Snippet }
                 if ($idx -eq $cursor -and $marqueeOffset -gt 0 -and $fullDesc.Length -gt $room) {
