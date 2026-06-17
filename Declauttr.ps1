@@ -289,6 +289,19 @@ function Get-SessionPreviewContent {
     return [pscustomobject]@{ Header = $head; Body = $body }
 }
 
+# --- Drop-shadow highlight handling -----------------------------------------
+# Index into a dialog's $BackgroundRows of the picker's currently-selected row
+# (set by the picker before each dialog opens; -1 when no selection is in view).
+# The selection bar is a bright White-on-DarkBlue line, so a plain
+# DarkGray-on-black shadow cell over it reads as a jarring black gash. For cells
+# that land on that row we instead paint a darker shade of the selection's own
+# blue. ConsoleColor has no blue darker than DarkBlue (the selection colour
+# itself), so we use a truecolor escape: dark navy background + legible light
+# blue-grey text. Reset afterwards so the next coloured Write-Host is unaffected.
+$script:ShadowHighlightRow = -1
+$script:ShadowHlOpen  = "$([char]27)[38;2;175;190;220;48;2;20;34;68m"
+$script:ShadowHlReset = "$([char]27)[0m"
+
 function Show-SessionPreview {
     param(
         [Parameter(Mandatory)] [object]$Session,
@@ -300,7 +313,9 @@ function Show-SessionPreview {
         [bool]$CaseSensitive = $false
     )
 
-    $boxW = $ScreenWidth - 6
+    # Leave an 8-column margin on each side so the preview reads as a narrower,
+    # inset panel rather than near-full-width.
+    $boxW = $ScreenWidth - 16
     $boxH = [Math]::Max(15, [int]($ScreenHeight * 0.70))
     if ($boxW -lt 60) { $boxW = [Math]::Max(40, $ScreenWidth - 4) }
     if ($boxW -gt ($ScreenWidth - 4))  { $boxW = $ScreenWidth - 4 }
@@ -433,7 +448,12 @@ function Show-SessionPreview {
                 $sc = $boxLeft + $boxW + $dc
                 if ($sc -ge $ScreenWidth) { break }
                 [Console]::SetCursorPosition($sc, $sr)
-                Write-Host (& $shadowChar $sc $sr) -NoNewline -ForegroundColor DarkGray
+                $shCh = (& $shadowChar $sc $sr)
+                if (($sr - $BaseTop) -eq $script:ShadowHighlightRow) {
+                    Write-Host ($script:ShadowHlOpen + $shCh + $script:ShadowHlReset) -NoNewline
+                } else {
+                    Write-Host $shCh -NoNewline -ForegroundColor DarkGray
+                }
             }
         }
         $shadowRow = $boxTop + $contentH + 2
@@ -446,7 +466,11 @@ function Show-SessionPreview {
                 for ($sc = $sStart; $sc -le $sEnd; $sc++) {
                     [void]$sb.Append((& $shadowChar $sc $shadowRow))
                 }
-                Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+                if (($shadowRow - $BaseTop) -eq $script:ShadowHighlightRow) {
+                    Write-Host ($script:ShadowHlOpen + $sb.ToString() + $script:ShadowHlReset) -NoNewline
+                } else {
+                    Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+                }
             }
         }
 
@@ -848,7 +872,12 @@ function Show-ConfirmDelete {
                 $sc = $boxLeft + $boxW + $dc
                 if ($sc -ge $ScreenWidth) { break }
                 [Console]::SetCursorPosition($sc, $sr)
-                Write-Host (& $shadowChar $sc $sr) -NoNewline -ForegroundColor DarkGray
+                $shCh = (& $shadowChar $sc $sr)
+                if (($sr - $BaseTop) -eq $script:ShadowHighlightRow) {
+                    Write-Host ($script:ShadowHlOpen + $shCh + $script:ShadowHlReset) -NoNewline
+                } else {
+                    Write-Host $shCh -NoNewline -ForegroundColor DarkGray
+                }
             }
         }
         $shadowRow = $boxTop + $contentH + 2
@@ -861,7 +890,11 @@ function Show-ConfirmDelete {
                 for ($sc = $sStart; $sc -le $sEnd; $sc++) {
                     [void]$sb.Append((& $shadowChar $sc $shadowRow))
                 }
-                Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+                if (($shadowRow - $BaseTop) -eq $script:ShadowHighlightRow) {
+                    Write-Host ($script:ShadowHlOpen + $sb.ToString() + $script:ShadowHlReset) -NoNewline
+                } else {
+                    Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+                }
             }
         }
 
@@ -981,7 +1014,12 @@ function Show-MessageBox {
                 $sc = $boxLeft + $boxW + $dc
                 if ($sc -ge $ScreenWidth) { break }
                 [Console]::SetCursorPosition($sc, $sr)
-                Write-Host (& $shadowChar $sc $sr) -NoNewline -ForegroundColor DarkGray
+                $shCh = (& $shadowChar $sc $sr)
+                if (($sr - $BaseTop) -eq $script:ShadowHighlightRow) {
+                    Write-Host ($script:ShadowHlOpen + $shCh + $script:ShadowHlReset) -NoNewline
+                } else {
+                    Write-Host $shCh -NoNewline -ForegroundColor DarkGray
+                }
             }
         }
         $shadowRow = $boxTop + $contentH + 2
@@ -994,7 +1032,11 @@ function Show-MessageBox {
                 for ($sc = $sStart; $sc -le $sEnd; $sc++) {
                     [void]$sb.Append((& $shadowChar $sc $shadowRow))
                 }
-                Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+                if (($shadowRow - $BaseTop) -eq $script:ShadowHighlightRow) {
+                    Write-Host ($script:ShadowHlOpen + $sb.ToString() + $script:ShadowHlReset) -NoNewline
+                } else {
+                    Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+                }
             }
         }
     }
@@ -1253,7 +1295,12 @@ function Show-SearchPrompt {
                 $sc = $boxLeft + $boxW + $dc
                 if ($sc -ge $ScreenWidth) { break }
                 [Console]::SetCursorPosition($sc, $sr)
-                Write-Host (& $shadowChar $sc $sr) -NoNewline -ForegroundColor DarkGray
+                $shCh = (& $shadowChar $sc $sr)
+                if (($sr - $BaseTop) -eq $script:ShadowHighlightRow) {
+                    Write-Host ($script:ShadowHlOpen + $shCh + $script:ShadowHlReset) -NoNewline
+                } else {
+                    Write-Host $shCh -NoNewline -ForegroundColor DarkGray
+                }
             }
         }
         $shadowRow = $boxTop + $contentH + 2
@@ -1266,7 +1313,11 @@ function Show-SearchPrompt {
                 for ($sc = $sStart; $sc -le $sEnd; $sc++) {
                     [void]$sb.Append((& $shadowChar $sc $shadowRow))
                 }
-                Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+                if (($shadowRow - $BaseTop) -eq $script:ShadowHighlightRow) {
+                    Write-Host ($script:ShadowHlOpen + $sb.ToString() + $script:ShadowHlReset) -NoNewline
+                } else {
+                    Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+                }
             }
         }
 
@@ -1619,7 +1670,12 @@ function Show-About {
                 $sc = $boxLeft + $boxW + $dc
                 if ($sc -ge $ScreenWidth) { break }
                 [Console]::SetCursorPosition($sc, $sr)
-                Write-Host (& $shadowChar $sc $sr) -NoNewline -ForegroundColor DarkGray
+                $shCh = (& $shadowChar $sc $sr)
+                if (($sr - $BaseTop) -eq $script:ShadowHighlightRow) {
+                    Write-Host ($script:ShadowHlOpen + $shCh + $script:ShadowHlReset) -NoNewline
+                } else {
+                    Write-Host $shCh -NoNewline -ForegroundColor DarkGray
+                }
             }
         }
         $shadowRow = $boxTop + $contentH + 2
@@ -1632,7 +1688,11 @@ function Show-About {
                 for ($sc = $sStart; $sc -le $sEnd; $sc++) {
                     [void]$sb.Append((& $shadowChar $sc $shadowRow))
                 }
-                Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+                if (($shadowRow - $BaseTop) -eq $script:ShadowHighlightRow) {
+                    Write-Host ($script:ShadowHlOpen + $sb.ToString() + $script:ShadowHlReset) -NoNewline
+                } else {
+                    Write-Host $sb.ToString() -NoNewline -ForegroundColor DarkGray
+                }
             }
         }
 
@@ -1822,29 +1882,23 @@ function Get-AllSessions {
 }
 
 function Get-ProjectColumnWidth {
-    # Width for the picker's Project column: wide enough for the longest project
-    # name present, but never less than a 10-char floor (so the "Project" header
-    # label fits) nor more than half the screen (so the Title column keeps its
-    # share). Computed from the active session set, not per visible row, so the
-    # column stays put while scrolling.
+    # Width for the picker's Project column. The Project and Title columns share
+    # all the space left after the fixed columns (marker, timestamp, size), split
+    # evenly so the two read at the same width. A 10-char floor keeps the
+    # "Project" header label legible on very narrow terminals.
     param(
-        [Parameter(Mandatory)] [System.Collections.IList]$Sessions,
         [Parameter(Mandatory)] [int]$ScreenWidth
     )
 
-    $floor = 10
-    $cap   = [int][Math]::Floor($ScreenWidth * 0.5)
-    if ($cap -lt $floor) { return $floor }
-
-    $longest = 0
-    foreach ($s in $Sessions) {
-        $len = "$($s.Project)".Length
-        if ($len -gt $longest) { $longest = $len }
-    }
-
-    if ($longest -lt $floor) { return $floor }
-    if ($longest -gt $cap)   { return $cap }
-    return $longest
+    # Per-row overhead that is neither the Project nor the Title column:
+    #   flag(1) + space(1) + marker "[ ]"(3) + gap(2) + timestamp(16) + gap(2) +
+    #   size "   742,6 KB"(11) + gap(2) + two trailing spaces after Project(2) +
+    #   the 1-col safety margin the renderer leaves at the row's end(1) = 41.
+    $overhead = 41
+    $floor    = 10
+    $split    = [int][Math]::Floor(($ScreenWidth - $overhead) / 2)
+    if ($split -lt $floor) { return $floor }
+    return $split
 }
 
 function Show-SessionPicker {
@@ -1862,7 +1916,11 @@ function Show-SessionPicker {
     if (-not $width  -or $width  -lt 60) { $width  = 120 }
     if (-not $height -or $height -lt 10) { $height = 30 }
 
-    $reserved = 7
+    # Rows the list can't use: header + column header + the ↓ scroll-indicator
+    # row + the footer = 4. The footer is pinned to the last line (see the render
+    # loop); the scroll-indicator row sits directly above it and, being blank
+    # apart from the arrow, doubles as the separator from the footer.
+    $reserved = 4
     $viewport = [Math]::Min($Sessions.Count, [Math]::Max(5, $height - $reserved))
 
     $cursor = 0
@@ -1872,7 +1930,7 @@ function Show-SessionPicker {
     $origTop = [Console]::CursorTop
 
     # Reserve screen space by emitting blank lines, so SetCursorPosition stays valid.
-    for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
+    for ($i = 0; $i -lt ($viewport + 3); $i++) { Write-Host '' }
 
     # Marquee state: when the cursor sits on a row for >1s, scroll its
     # description horizontally so long titles/snippets can be read in full.
@@ -1929,7 +1987,7 @@ function Show-SessionPicker {
                         if ($cursor -ge $top + $viewport) { $top = [Math]::Max(0, $cursor - $viewport + 1) }
                         [Console]::Clear()
                         $origTop = [Console]::CursorTop
-                        for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
+                        for ($i = 0; $i -lt ($viewport + 3); $i++) { Write-Host '' }
                         $needRedraw = $true
                         continue
                     }
@@ -1954,7 +2012,7 @@ function Show-SessionPicker {
                             if ($script:JumpSession) { return $deletedList }
                             [Console]::Clear()
                             $origTop = [Console]::CursorTop
-                            for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
+                            for ($i = 0; $i -lt ($viewport + 3); $i++) { Write-Host '' }
                             $marqueeOffset = 0
                             $cursorIdleTimer.Restart()
                         }
@@ -1968,7 +2026,7 @@ function Show-SessionPicker {
                             # Cancelled or refused: repaint the picker behind the closed popup.
                             [Console]::Clear()
                             $origTop = [Console]::CursorTop
-                            for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
+                            for ($i = 0; $i -lt ($viewport + 3); $i++) { Write-Host '' }
                             $marqueeOffset = 0
                             $cursorIdleTimer.Restart()
                         }
@@ -2011,7 +2069,7 @@ function Show-SessionPicker {
                                 -InitialCaseSensitive $searchCaseSensitive
                             [Console]::Clear()
                             $origTop = [Console]::CursorTop
-                            for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
+                            for ($i = 0; $i -lt ($viewport + 3); $i++) { Write-Host '' }
 
                             if ($null -ne $result -and $result.Query -and $result.Query.Trim()) {
                                 $q  = $result.Query.Trim()
@@ -2041,7 +2099,7 @@ function Show-SessionPicker {
                                 -BackgroundRows $rowBuffer.ToArray()
                             [Console]::Clear()
                             $origTop = [Console]::CursorTop
-                            for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
+                            for ($i = 0; $i -lt ($viewport + 3); $i++) { Write-Host '' }
                             $marqueeOffset = 0
                             $cursorIdleTimer.Restart()
 
@@ -2090,7 +2148,7 @@ function Show-SessionPicker {
                                 -BackgroundRows $rowBuffer.ToArray()
                             [Console]::Clear()
                             $origTop = [Console]::CursorTop
-                            for ($i = 0; $i -lt ($viewport + 5); $i++) { Write-Host '' }
+                            for ($i = 0; $i -lt ($viewport + 3); $i++) { Write-Host '' }
                             $marqueeOffset = 0
                             $cursorIdleTimer.Restart()
                         }
@@ -2102,12 +2160,17 @@ function Show-SessionPicker {
             [Console]::SetCursorPosition(0, $origTop)
             $rowBuffer.Clear()
 
+            # Tell any dialog that opens which $rowBuffer row holds the selection
+            # bar, so its drop-shadow tints that cell instead of blacking it out.
+            # Layout: header = 0, column header = 1, list rows start at 2.
+            $script:ShadowHighlightRow = 2 + ($cursor - $top)
+
             $checkedCount = @($activeSessions | Where-Object Checked).Count
 
-            # Project column sized to the longest name in the active view (capped
-            # at half the screen). Recomputed each redraw, but the active set only
-            # changes on filter/resize, so it stays stable while scrolling.
-            $projColWidth = Get-ProjectColumnWidth -Sessions $activeSessions -ScreenWidth $width
+            # Project and Title columns get equal width (the space after the fixed
+            # columns, split in two). Recomputed each redraw so it tracks the
+            # window width on resize.
+            $projColWidth = Get-ProjectColumnWidth -ScreenWidth $width
 
             if ($searchQuery) {
                 # Header split into three segments so the "F clear filter" pill
@@ -2215,17 +2278,35 @@ function Show-SessionPicker {
             Write-Host (' ' * $spacerRoom)
             $rowBuffer.Add($spacerArrow + (' ' * $spacerRoom))
 
+            # Pin the footer to the bottom-most terminal line. The viewport is
+            # capped at the session count, so on a tall/maximised window the list
+            # ends well above the bottom; pad the gap with blank rows (kept in
+            # $rowBuffer so dialog shadow restoration stays row-aligned) and drop
+            # the footer onto the last line. The screen below the list is already
+            # blank (Clear-Host / Console.Clear precede every redraw), so the gap
+            # rows need not be re-emitted each frame — only tracked.
+            $footerIndex = [Math]::Max($rowBuffer.Count, $height - 1 - $origTop)
+            while ($rowBuffer.Count -lt $footerIndex) {
+                $rowBuffer.Add(' ' * $width)
+            }
+
             $footer = " ! = has a custom title — likely a keeper. Highlighted rows are pre-checked as disposable. Selected items will be permanently deleted."
             if ($footer.Length -gt $width) { $footer = $footer.Substring(0, $width) }
             $footerText = $footer.PadRight($width)
-            Write-Host $footerText -ForegroundColor DarkGray
+            $footerRow  = [Math]::Min($height - 1, $origTop + $rowBuffer.Count)
+            [Console]::SetCursorPosition(0, $footerRow)
+            # -NoNewline: the footer sits on the last line, so a trailing newline
+            # would scroll the whole UI up by one on every redraw.
+            Write-Host $footerText -NoNewline -ForegroundColor DarkGray
             $rowBuffer.Add($footerText)
 
             $needRedraw = $false
         }
     } finally {
         [Console]::CursorVisible = $true
-        try { [Console]::SetCursorPosition(0, $origTop + $viewport + 4) } catch {}
+        # Footer is pinned to the last line; drop the cursor there so the shell
+        # prompt scrolls up cleanly below the UI rather than landing in the gap.
+        try { [Console]::SetCursorPosition(0, $height - 1) } catch {}
         Write-Host ''
     }
 }
