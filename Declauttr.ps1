@@ -262,6 +262,12 @@ function Get-SessionPreviewContent {
     $titleText = if ($Session.Title) { $Session.Title } else { '' }
     $head.Add("Title:    $titleText")
     $head.Add("When:     $($Session.Timestamp.ToString('yyyy-MM-dd HH:mm'))   Size: $($Session.SizeFormatted.Trim())")
+    # For a grouped session, note its role in the fork/continuation family.
+    if ($Session.IsParent) {
+        $head.Add('Family:   parent (newest; continues older sessions -->)')
+    } elseif ($Session.IsChild) {
+        $head.Add('Family:   child (<-- continued by a more recent session)')
+    }
     $head.Add('─' * $w)
 
     $count = 0
