@@ -59,6 +59,11 @@
         yellow.
       * Sessions with a user-assigned custom title are rendered cyan and
         marked with a leading "!" to flag likely keepers.
+      * Sessions that are forks or continuations of the same conversation are
+        grouped into a family: the most recent one is shown normally and its
+        older siblings appear indented beneath it with a leading "∟ ". Marking
+        the family's top (parent) row for deletion also marks all of its
+        children; a child can still be marked on its own.
       * When the highlighted row's title or first user message is too long
         to fit the column, sitting on it for ~1 second marquees the full
         text horizontally.
@@ -98,18 +103,25 @@ function Get-SessionMetadata {
         [int]$MaxLength = 400
     )
 
-    $snippet     = $null
-    $aiTitle     = $null
-    $customTitle = $null
+    $snippet      = $null
+    $aiTitle      = $null
+    $customTitle  = $null
+    $firstMsgUuid = $null
+    $compactRefs  = [System.Collections.Generic.List[string]]::new()
 
     foreach ($line in [System.IO.File]::ReadLines($Path)) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
 
         # Fast text pre-filter — parse only lines that might contain what we need.
-        $isUser   = (-not $snippet) -and $line.Contains('"type":"user"')
-        $isAi     = $line.Contains('"type":"ai-title"')
-        $isCustom = $line.Contains('"type":"custom-title"')
-        if (-not ($isUser -or $isAi -or $isCustom)) { continue }
+        # User lines are parsed until BOTH the snippet and the first-message uuid
+        # are known; titles ("last wins") and compact metadata are checked on
+        # every line but only JSON-parsed when their marker is present.
+        $needUser  = (-not $snippet) -or (-not $firstMsgUuid)
+        $isUser    = $needUser -and $line.Contains('"type":"user"')
+        $isAi      = $line.Contains('"type":"ai-title"')
+        $isCustom  = $line.Contains('"type":"custom-title"')
+        $isCompact = $line.Contains('"compactMetadata"')
+        if (-not ($isUser -or $isAi -or $isCustom -or $isCompact)) { continue }
 
         try {
             $obj = $line | ConvertFrom-Json -ErrorAction Stop
@@ -118,22 +130,34 @@ function Get-SessionMetadata {
         if ($isAi     -and $obj.type -eq 'ai-title'     -and $obj.aiTitle)     { $aiTitle     = $obj.aiTitle }
         if ($isCustom -and $obj.type -eq 'custom-title' -and $obj.customTitle) { $customTitle = $obj.customTitle }
 
-        if ($isUser -and -not $snippet -and $obj.type -eq 'user') {
-            $content = $obj.message.content
-            $text = $null
-            if ($content -is [string]) {
-                $text = $content
-            } elseif ($content) {
-                foreach ($c in $content) {
-                    if ($c.type -eq 'text' -and $c.text) { $text = $c.text; break }
-                }
+        if ($isCompact -and $obj.compactMetadata -and $obj.compactMetadata.preservedSegment) {
+            $seg = $obj.compactMetadata.preservedSegment
+            foreach ($k in @('headUuid', 'anchorUuid', 'tailUuid')) {
+                $v = $seg.$k
+                if ($v -and ($compactRefs -notcontains [string]$v)) { $compactRefs.Add([string]$v) }
             }
-            if ($text -and -not $text.StartsWith('<local-command') -and -not $text.StartsWith('<command-name>')) {
-                $text = ($text -replace '\s+', ' ').Trim()
-                if ($text.Length -gt $MaxLength) {
-                    $text = $text.Substring(0, $MaxLength).TrimEnd() + '…'
+        }
+
+        if ($isUser -and $obj.type -eq 'user') {
+            if (-not $firstMsgUuid -and $obj.uuid) { $firstMsgUuid = [string]$obj.uuid }
+
+            if (-not $snippet) {
+                $content = $obj.message.content
+                $text = $null
+                if ($content -is [string]) {
+                    $text = $content
+                } elseif ($content) {
+                    foreach ($c in $content) {
+                        if ($c.type -eq 'text' -and $c.text) { $text = $c.text; break }
+                    }
                 }
-                $snippet = $text
+                if ($text -and -not $text.StartsWith('<local-command') -and -not $text.StartsWith('<command-name>')) {
+                    $text = ($text -replace '\s+', ' ').Trim()
+                    if ($text.Length -gt $MaxLength) {
+                        $text = $text.Substring(0, $MaxLength).TrimEnd() + '…'
+                    }
+                    $snippet = $text
+                }
             }
         }
     }
@@ -142,6 +166,8 @@ function Get-SessionMetadata {
         Snippet         = if ($snippet)     { $snippet }     else { '(no user message found)' }
         Title           = if ($customTitle) { $customTitle } elseif ($aiTitle) { $aiTitle } else { $null }
         HasCustomTitle  = [bool]$customTitle
+        FirstMsgUuid    = $firstMsgUuid
+        CompactRefs     = $compactRefs.ToArray()
     }
 }
 
@@ -236,6 +262,12 @@ function Get-SessionPreviewContent {
     $titleText = if ($Session.Title) { $Session.Title } else { '' }
     $head.Add("Title:    $titleText")
     $head.Add("When:     $($Session.Timestamp.ToString('yyyy-MM-dd HH:mm'))   Size: $($Session.SizeFormatted.Trim())")
+    # For a grouped session, note its role in the fork/continuation family.
+    if ($Session.IsParent) {
+        $head.Add('Family:   parent (newest; continues older sessions -->)')
+    } elseif ($Session.IsChild) {
+        $head.Add('Family:   child (<-- continued by a more recent session)')
+    }
     $head.Add('─' * $w)
 
     $count = 0
@@ -1841,6 +1873,132 @@ function Test-SessionMatchesQuery {
     return $false
 }
 
+function Get-SessionGroupKey {
+    # Same-title fallback key used to group sibling sessions within a project.
+    # Prefers the (AI/custom) title; falls back to the first user message only
+    # when it is substantial. Returns $null for trivial/empty sessions so the
+    # empty "resume"-style rows never collapse into one bogus family.
+    param(
+        [string]$Title,
+        [string]$Snippet
+    )
+
+    if ($Title -and $Title.Trim()) {
+        return 'T:' + $Title.Trim().ToLower()
+    }
+
+    if ($Snippet -and $Snippet -ne '(no user message found)') {
+        $t = $Snippet.Trim().ToLower().TrimEnd('.', '!', '?', '…')
+        $trivial = @('resume', 'config', 'exit', 'quit', 'clear', 'help', 'init', 'test')
+        if ($t.Length -ge 15 -and ($trivial -notcontains $t)) {
+            return 'S:' + $Snippet.Trim().ToLower()
+        }
+    }
+
+    return $null
+}
+
+function Group-SessionsIntoFamilies {
+    # Union-finds one project's sessions into families and returns them in
+    # display order. Sessions are unioned when they share a first-message uuid
+    # (fork), a compactMetadata preserved-segment uuid (compaction lineage), or
+    # a same-title GroupKey. In a multi-member family the latest-changed session
+    # is the parent; the rest are children. Mutates IsParent/IsChild/FamilyId on
+    # each input object. Returns families ordered by parent timestamp (desc),
+    # parent first then children (desc) within each.
+    param(
+        [Parameter(Mandatory)] [System.Collections.IList]$Sessions
+    )
+
+    $n = $Sessions.Count
+    if ($n -eq 0) { return ,([System.Collections.Generic.List[object]]::new()) }
+
+    # Union-find over positional indices 0..n-1.
+    $parent = 0..($n - 1)
+    $find = {
+        param([int]$x)
+        while ($parent[$x] -ne $x) {
+            $parent[$x] = $parent[$parent[$x]]   # path halving
+            $x = $parent[$x]
+        }
+        return $x
+    }
+    $union = {
+        param([int]$a, [int]$b)
+        $ra = & $find $a; $rb = & $find $b
+        if ($ra -ne $rb) { $parent[$ra] = $rb }
+    }
+    $unionByKey = {
+        param([hashtable]$map)
+        foreach ($k in $map.Keys) {
+            $idxs = $map[$k]
+            for ($i = 1; $i -lt $idxs.Count; $i++) { & $union $idxs[0] $idxs[$i] }
+        }
+    }
+
+    $byFirst = @{}; $byCompact = @{}; $byGroup = @{}
+    for ($i = 0; $i -lt $n; $i++) {
+        $s = $Sessions[$i]
+        if ($s.FirstMsgUuid) {
+            if (-not $byFirst.ContainsKey($s.FirstMsgUuid)) { $byFirst[$s.FirstMsgUuid] = [System.Collections.Generic.List[int]]::new() }
+            $byFirst[$s.FirstMsgUuid].Add($i)
+        }
+        if ($s.CompactRefs) {
+            foreach ($r in $s.CompactRefs) {
+                if (-not $byCompact.ContainsKey($r)) { $byCompact[$r] = [System.Collections.Generic.List[int]]::new() }
+                $byCompact[$r].Add($i)
+            }
+        }
+        if ($s.GroupKey) {
+            if (-not $byGroup.ContainsKey($s.GroupKey)) { $byGroup[$s.GroupKey] = [System.Collections.Generic.List[int]]::new() }
+            $byGroup[$s.GroupKey].Add($i)
+        }
+    }
+    & $unionByKey $byFirst
+    & $unionByKey $byCompact
+    & $unionByKey $byGroup
+
+    # Bucket indices by their component root.
+    $comp = @{}
+    for ($i = 0; $i -lt $n; $i++) {
+        $r = & $find $i
+        if (-not $comp.ContainsKey($r)) { $comp[$r] = [System.Collections.Generic.List[int]]::new() }
+        $comp[$r].Add($i)
+    }
+
+    # Assign flags per component and record a per-family sort key.
+    $families = [System.Collections.Generic.List[object]]::new()
+    foreach ($r in $comp.Keys) {
+        $members = @(foreach ($ix in $comp[$r]) { $Sessions[$ix] })
+        if ($members.Count -eq 1) {
+            $m = $members[0]
+            $m.IsParent = $false; $m.IsChild = $false; $m.FamilyId = $null
+            $families.Add([pscustomobject]@{ SortTs = $m.Timestamp; SortId = $m.Uuid; Ordered = @($m) })
+        } else {
+            $sorted = @($members | Sort-Object -Property `
+                @{ Expression = 'Timestamp'; Descending = $true }, `
+                @{ Expression = 'Uuid'; Descending = $true })
+            $parentS = $sorted[0]
+            foreach ($m in $members) {
+                $m.FamilyId = $parentS.Uuid
+                if ($m.Uuid -eq $parentS.Uuid) { $m.IsParent = $true;  $m.IsChild = $false }
+                else                           { $m.IsParent = $false; $m.IsChild = $true  }
+            }
+            $families.Add([pscustomobject]@{ SortTs = $parentS.Timestamp; SortId = $parentS.Uuid; Ordered = $sorted })
+        }
+    }
+
+    # Order families by parent timestamp (desc), tie-break uuid (desc), then flatten.
+    $orderedFamilies = @($families | Sort-Object -Property `
+        @{ Expression = 'SortTs'; Descending = $true }, `
+        @{ Expression = 'SortId'; Descending = $true })
+    $out = [System.Collections.Generic.List[object]]::new()
+    foreach ($fam in $orderedFamilies) {
+        foreach ($m in $fam.Ordered) { $out.Add($m) }
+    }
+    return ,$out
+}
+
 function Get-AllSessions {
     param(
         [Parameter(Mandatory)] [string]$Root,
@@ -1857,10 +2015,14 @@ function Get-AllSessions {
     foreach ($proj in $projects) {
         $files = Get-ChildItem -Path $proj.FullName -Filter '*.jsonl' -File |
                  Sort-Object LastWriteTime -Descending
+
+        # Build this project's sessions, then group them into families. Grouping
+        # is per-project because a family never spans projects.
+        $projSessions = [System.Collections.Generic.List[object]]::new()
         foreach ($f in $files) {
             $meta      = Get-SessionMetadata -Path $f.FullName -MaxLength $SnippetMax
             $recommend = Test-RecommendRemoval -SizeBytes $f.Length -Snippet $meta.Snippet
-            $result.Add([pscustomobject]@{
+            $projSessions.Add([pscustomobject]@{
                 Project        = $proj.Name
                 Path           = $f.FullName
                 Uuid           = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
@@ -1872,8 +2034,17 @@ function Get-AllSessions {
                 Snippet        = $meta.Snippet
                 Recommended    = $recommend
                 Checked        = $recommend
+                FirstMsgUuid   = $meta.FirstMsgUuid
+                CompactRefs    = $meta.CompactRefs
+                GroupKey       = Get-SessionGroupKey -Title $meta.Title -Snippet $meta.Snippet
+                FamilyId       = $null
+                IsParent       = $false
+                IsChild        = $false
             })
         }
+
+        $ordered = Group-SessionsIntoFamilies -Sessions $projSessions
+        foreach ($s in $ordered) { $result.Add($s) }
     }
     # Comma prefix prevents PowerShell from enumerating the list into an
     # object[] (which is fixed-size and would break later .RemoveAt calls in
@@ -1899,6 +2070,20 @@ function Get-ProjectColumnWidth {
     $split    = [int][Math]::Floor(($ScreenWidth - $overhead) / 2)
     if ($split -lt $floor) { return $floor }
     return $split
+}
+
+function Set-FamilyChecked {
+    # Set .Checked on every session sharing $FamilyId. Used by the picker so
+    # marking a parent for deletion cascades to its whole family (including
+    # members currently filtered out of view).
+    param(
+        [Parameter(Mandatory)] [System.Collections.IList]$Sessions,
+        [Parameter(Mandatory)] [string]$FamilyId,
+        [Parameter(Mandatory)] [bool]$State
+    )
+    foreach ($s in $Sessions) {
+        if ($s.FamilyId -eq $FamilyId) { $s.Checked = $State }
+    }
 }
 
 function Show-SessionPicker {
@@ -2033,7 +2218,15 @@ function Show-SessionPicker {
                     }
                     'X'         {
                         if ($activeSessions.Count -gt 0) {
-                            $activeSessions[$cursor].Checked = -not $activeSessions[$cursor].Checked
+                            $row = $activeSessions[$cursor]
+                            $newState = -not $row.Checked
+                            $row.Checked = $newState
+                            # Marking a parent cascades to its whole family
+                            # (across the master list, so filtered-out members
+                            # follow too). Children toggle on their own.
+                            if ($row.IsParent -and $row.FamilyId) {
+                                Set-FamilyChecked -Sessions $Sessions -FamilyId $row.FamilyId -State $newState
+                            }
                         }
                     }
                     'A'         {
@@ -2239,31 +2432,57 @@ function Show-SessionPicker {
                 if ($proj.Length -gt $projColWidth) { $proj = '…' + $proj.Substring($proj.Length - ($projColWidth - 1)) }
                 $prefix  = "$flag $mark  $ts  $($s.SizeFormatted)  $($proj.PadRight($projColWidth))  "
                 $room    = [Math]::Max(10, $width - $prefix.Length - 1)
+
+                # Children carry a fixed 2-column "∟ " connector at the start of
+                # the Title column, lining up under the parent's title. Only the
+                # title text after it scrolls during a marquee.
+                $connector = if ($s.IsChild) { '∟ ' } else { '' }
+                $titleRoom = [Math]::Max(1, $room - $connector.Length)
+
                 $fullDesc = if ($s.Title) { $s.Title } else { $s.Snippet }
-                if ($idx -eq $cursor -and $marqueeOffset -gt 0 -and $fullDesc.Length -gt $room) {
+                if ($idx -eq $cursor -and $marqueeOffset -gt 0 -and $fullDesc.Length -gt $titleRoom) {
                     $gap   = '   •   '
                     $cycle = $fullDesc + $gap
                     $start = $marqueeOffset % $cycle.Length
-                    $sb    = [System.Text.StringBuilder]::new($room)
-                    for ($j = 0; $j -lt $room; $j++) {
+                    $sb    = [System.Text.StringBuilder]::new($titleRoom)
+                    for ($j = 0; $j -lt $titleRoom; $j++) {
                         [void]$sb.Append($cycle[($start + $j) % $cycle.Length])
                     }
-                    $desc = $sb.ToString()
+                    $titleText = $sb.ToString()
                 } else {
-                    $desc = $fullDesc
-                    if ($desc.Length -gt $room) { $desc = $desc.Substring(0, $room - 1) + '…' }
+                    $titleText = $fullDesc
+                    if ($titleText.Length -gt $titleRoom) { $titleText = $titleText.Substring(0, $titleRoom - 1) + '…' }
                 }
-                $line = ($prefix + $desc).PadRight($width)
+
+                $line = ($prefix + $connector + $titleText).PadRight($width)
                 if ($line.Length -gt $width) { $line = $line.Substring(0, $width) }
 
                 if ($idx -eq $cursor) {
+                    # Selected row: single bar, connector included in the bar.
                     Write-Host $line -ForegroundColor White -BackgroundColor DarkBlue
-                } elseif ($s.HasCustomTitle) {
-                    Write-Host $line -ForegroundColor DarkCyan
-                } elseif ($s.Recommended) {
-                    Write-Host $line -ForegroundColor DarkYellow
                 } else {
-                    Write-Host $line
+                    $rowColor = if ($s.HasCustomTitle) { 'DarkCyan' } elseif ($s.Recommended) { 'DarkYellow' } else { $null }
+                    if ($s.IsChild) {
+                        # Split writes so the connector stays DarkGray (a dim
+                        # "branch") while the title keeps the row's own colour.
+                        # Slice the already width-clamped $line (the same string
+                        # pushed to $rowBuffer) into its three coloured segments,
+                        # so the printed row can never overflow $width or drift
+                        # from the shadow buffer on a narrow terminal.
+                        $p1   = if ($line.Length -ge $prefix.Length) { $line.Substring(0, $prefix.Length) } else { $line }
+                        $rem  = if ($line.Length -gt $prefix.Length) { $line.Substring($prefix.Length) } else { '' }
+                        $conn = if ($rem.Length -ge $connector.Length) { $rem.Substring(0, $connector.Length) } else { $rem }
+                        $rest = if ($rem.Length -gt $connector.Length) { $rem.Substring($connector.Length) } else { '' }
+                        if ($rowColor) { Write-Host $p1 -NoNewline -ForegroundColor $rowColor }
+                        else           { Write-Host $p1 -NoNewline }
+                        Write-Host $conn -NoNewline -ForegroundColor DarkGray
+                        if ($rowColor) { Write-Host $rest -ForegroundColor $rowColor }
+                        else           { Write-Host $rest }
+                    } elseif ($rowColor) {
+                        Write-Host $line -ForegroundColor $rowColor
+                    } else {
+                        Write-Host $line
+                    }
                 }
                 $rowBuffer.Add($line)
             }
