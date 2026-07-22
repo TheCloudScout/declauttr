@@ -1887,6 +1887,107 @@ function Get-SessionGroupKey {
     return $null
 }
 
+function Group-SessionsIntoFamilies {
+    # Union-finds one project's sessions into families and returns them in
+    # display order. Sessions are unioned when they share a first-message uuid
+    # (fork), a compactMetadata preserved-segment uuid (compaction lineage), or
+    # a same-title GroupKey. In a multi-member family the latest-changed session
+    # is the parent; the rest are children. Mutates IsParent/IsChild/FamilyId on
+    # each input object. Returns families ordered by parent timestamp (desc),
+    # parent first then children (desc) within each.
+    param(
+        [Parameter(Mandatory)] [System.Collections.IList]$Sessions
+    )
+
+    $n = $Sessions.Count
+    if ($n -eq 0) { return ,([System.Collections.Generic.List[object]]::new()) }
+
+    # Union-find over positional indices 0..n-1.
+    $parent = 0..($n - 1)
+    $find = {
+        param([int]$x)
+        while ($parent[$x] -ne $x) {
+            $parent[$x] = $parent[$parent[$x]]   # path halving
+            $x = $parent[$x]
+        }
+        return $x
+    }
+    $union = {
+        param([int]$a, [int]$b)
+        $ra = & $find $a; $rb = & $find $b
+        if ($ra -ne $rb) { $parent[$ra] = $rb }
+    }
+    $unionByKey = {
+        param([hashtable]$map)
+        foreach ($k in $map.Keys) {
+            $idxs = $map[$k]
+            for ($i = 1; $i -lt $idxs.Count; $i++) { & $union $idxs[0] $idxs[$i] }
+        }
+    }
+
+    $byFirst = @{}; $byCompact = @{}; $byGroup = @{}
+    for ($i = 0; $i -lt $n; $i++) {
+        $s = $Sessions[$i]
+        if ($s.FirstMsgUuid) {
+            if (-not $byFirst.ContainsKey($s.FirstMsgUuid)) { $byFirst[$s.FirstMsgUuid] = [System.Collections.Generic.List[int]]::new() }
+            $byFirst[$s.FirstMsgUuid].Add($i)
+        }
+        if ($s.CompactRefs) {
+            foreach ($r in $s.CompactRefs) {
+                if (-not $byCompact.ContainsKey($r)) { $byCompact[$r] = [System.Collections.Generic.List[int]]::new() }
+                $byCompact[$r].Add($i)
+            }
+        }
+        if ($s.GroupKey) {
+            if (-not $byGroup.ContainsKey($s.GroupKey)) { $byGroup[$s.GroupKey] = [System.Collections.Generic.List[int]]::new() }
+            $byGroup[$s.GroupKey].Add($i)
+        }
+    }
+    & $unionByKey $byFirst
+    & $unionByKey $byCompact
+    & $unionByKey $byGroup
+
+    # Bucket indices by their component root.
+    $comp = @{}
+    for ($i = 0; $i -lt $n; $i++) {
+        $r = & $find $i
+        if (-not $comp.ContainsKey($r)) { $comp[$r] = [System.Collections.Generic.List[int]]::new() }
+        $comp[$r].Add($i)
+    }
+
+    # Assign flags per component and record a per-family sort key.
+    $families = [System.Collections.Generic.List[object]]::new()
+    foreach ($r in $comp.Keys) {
+        $members = @(foreach ($ix in $comp[$r]) { $Sessions[$ix] })
+        if ($members.Count -eq 1) {
+            $m = $members[0]
+            $m.IsParent = $false; $m.IsChild = $false; $m.FamilyId = $null
+            $families.Add([pscustomobject]@{ SortTs = $m.Timestamp; SortId = $m.Uuid; Ordered = @($m) })
+        } else {
+            $sorted = @($members | Sort-Object -Property `
+                @{ Expression = 'Timestamp'; Descending = $true }, `
+                @{ Expression = 'Uuid'; Descending = $true })
+            $parentS = $sorted[0]
+            foreach ($m in $members) {
+                $m.FamilyId = $parentS.Uuid
+                if ($m.Uuid -eq $parentS.Uuid) { $m.IsParent = $true;  $m.IsChild = $false }
+                else                           { $m.IsParent = $false; $m.IsChild = $true  }
+            }
+            $families.Add([pscustomobject]@{ SortTs = $parentS.Timestamp; SortId = $parentS.Uuid; Ordered = $sorted })
+        }
+    }
+
+    # Order families by parent timestamp (desc), tie-break uuid (desc), then flatten.
+    $orderedFamilies = @($families | Sort-Object -Property `
+        @{ Expression = 'SortTs'; Descending = $true }, `
+        @{ Expression = 'SortId'; Descending = $true })
+    $out = [System.Collections.Generic.List[object]]::new()
+    foreach ($fam in $orderedFamilies) {
+        foreach ($m in $fam.Ordered) { $out.Add($m) }
+    }
+    return ,$out
+}
+
 function Get-AllSessions {
     param(
         [Parameter(Mandatory)] [string]$Root,
