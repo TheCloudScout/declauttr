@@ -59,6 +59,11 @@
         yellow.
       * Sessions with a user-assigned custom title are rendered cyan and
         marked with a leading "!" to flag likely keepers.
+      * Sessions that are forks or continuations of the same conversation are
+        grouped into a family: the most recent one is shown normally and its
+        older siblings appear indented beneath it with a leading "∟ ". Marking
+        the family's top (parent) row for deletion also marks all of its
+        children; a child can still be marked on its own.
       * When the highlighted row's title or first user message is too long
         to fit the column, sitting on it for ~1 second marquees the full
         text horizontally.

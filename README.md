@@ -135,6 +135,12 @@ in **cyan** with a leading `!` have a user-assigned custom title (set via
 `/title`) — DeClauttR treats those as likely keepers, so you can spot them at
 a glance and avoid deleting them by accident.
 
+Related sessions (forks, `/compact` continuations, and same-titled siblings
+within a project) are grouped into a **family**. The most recent session is the
+parent; its older offshoots are shown indented beneath it with a `∟` connector.
+Marking a parent for deletion cascades to its children, so you can prune a whole
+stale lineage in one go; you can still check an individual child on its own.
+
 When the session list doesn't fit on screen, a yellow `↑` appears at the
 top-left of the viewport if there are rows above it, and a yellow `↓` at
 the bottom-left if there are rows below.
