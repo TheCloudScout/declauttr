@@ -2061,6 +2061,20 @@ function Get-ProjectColumnWidth {
     return $split
 }
 
+function Set-FamilyChecked {
+    # Set .Checked on every session sharing $FamilyId. Used by the picker so
+    # marking a parent for deletion cascades to its whole family (including
+    # members currently filtered out of view).
+    param(
+        [Parameter(Mandatory)] [System.Collections.IList]$Sessions,
+        [Parameter(Mandatory)] [string]$FamilyId,
+        [Parameter(Mandatory)] [bool]$State
+    )
+    foreach ($s in $Sessions) {
+        if ($s.FamilyId -eq $FamilyId) { $s.Checked = $State }
+    }
+}
+
 function Show-SessionPicker {
     param(
         [Parameter(Mandatory)] [System.Collections.IList]$Sessions
@@ -2193,7 +2207,15 @@ function Show-SessionPicker {
                     }
                     'X'         {
                         if ($activeSessions.Count -gt 0) {
-                            $activeSessions[$cursor].Checked = -not $activeSessions[$cursor].Checked
+                            $row = $activeSessions[$cursor]
+                            $newState = -not $row.Checked
+                            $row.Checked = $newState
+                            # Marking a parent cascades to its whole family
+                            # (across the master list, so filtered-out members
+                            # follow too). Children toggle on their own.
+                            if ($row.IsParent -and $row.FamilyId) {
+                                Set-FamilyChecked -Sessions $Sessions -FamilyId $row.FamilyId -State $newState
+                            }
                         }
                     }
                     'A'         {
