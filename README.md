@@ -33,6 +33,12 @@ Cross-platform: works on **macOS, Linux, and Windows** under PowerShell 7+ (`pws
 - **Highlights keepers in cyan**: sessions with a user-assigned custom title
   (set via `/title`) are rendered in cyan and marked with a leading `!` to
   flag the ones you most likely want to hold on to.
+- **Groups forked and continued sessions into families**: resume-forks,
+  `/compact` continuations, and same-titled siblings within a project are
+  collected under the most recent session (the "parent"), with the older
+  offshoots shown indented beneath it behind a `∟` connector. Marking the
+  parent for deletion cascades to the whole family, so a stale lineage clears
+  in one go.
 - **Rename from the preview**: press **R** inside a session preview to set a
   custom title without leaving DeClauttR — useful for promoting a spot-on
   AI-generated title to a custom one (so the row becomes a `!`-flagged
@@ -119,9 +125,9 @@ The full-screen checkbox picker is the default view.
 | ↑ / ↓ | move cursor |
 | Home / End | jump to top / bottom |
 | PgUp / PgDn | page up / down |
-| **Space** | open a preview overlay for the highlighted session — session details (project, UUID, title, timestamp, size) stay pinned at the top of the window while the message body scrolls. Drop-shadow renders the underlying picker text in dim grey, like a classic Turbo Vision dialog. Space/Esc to close, ↑↓/PgUp/PgDn to scroll, **R** to rename (see below). When a search filter is active (see **F** below), every occurrence of the search string is highlighted in the preview with a yellow background so you can scroll straight to the matches. |
+| **Space** | open a preview overlay for the highlighted session — session details (project, UUID, title, timestamp, size) stay pinned at the top of the window while the message body scrolls. For a session that's part of a family, the header also shows a `Family:` line marking it as the `parent` (newest, continues older sessions) or a `child` (continued by a more recent one). Drop-shadow renders the underlying picker text in dim grey, like a classic Turbo Vision dialog. Space/Esc to close, ↑↓/PgUp/PgDn to scroll, **R** to rename (see below). When a search filter is active (see **F** below), every occurrence of the search string is highlighted in the preview with a yellow background so you can scroll straight to the matches. |
 | **J** | jump into the highlighted session: quit DeClauttR and resume it with `claude --resume`, after changing into the session's original working directory (recovered from the transcript). Press **J** once for a confirmation popup, then **J** again to confirm — any other key cancels. Also available from inside the preview. If the directory no longer exists or `claude` isn't on your `PATH`, DeClauttR shows a brief notice and stays put. |
-| **X** | toggle the current row's checkbox |
+| **X** | toggle the current row's checkbox. On a family **parent** row this cascades to every child (mark or unmark the whole lineage at once); on a child or standalone row it toggles just that row. |
 | **A** | toggle all (check all, or uncheck if everything was checked) |
 | **R** | re-apply the "recommended for removal" selection |
 | **F** | toggle a content-search filter. A small prompt overlays the picker for a substring; press **Enter** to apply, and the list narrows to sessions whose `.jsonl` transcript contains that string anywhere (user prompts, assistant replies, titles). The match is case-insensitive by default — press **Tab** inside the prompt to flip the `[ ] Case-sensitive` checkbox before applying (the choice sticks across searches). Press **F** again on the picker to clear the filter and return to the full list. While filtered, the top status bar swaps "F filter" for a yellow "F clear filter: …" pill so you can't forget you're looking at a subset. |
