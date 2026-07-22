@@ -98,18 +98,25 @@ function Get-SessionMetadata {
         [int]$MaxLength = 400
     )
 
-    $snippet     = $null
-    $aiTitle     = $null
-    $customTitle = $null
+    $snippet      = $null
+    $aiTitle      = $null
+    $customTitle  = $null
+    $firstMsgUuid = $null
+    $compactRefs  = [System.Collections.Generic.List[string]]::new()
 
     foreach ($line in [System.IO.File]::ReadLines($Path)) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
 
         # Fast text pre-filter — parse only lines that might contain what we need.
-        $isUser   = (-not $snippet) -and $line.Contains('"type":"user"')
-        $isAi     = $line.Contains('"type":"ai-title"')
-        $isCustom = $line.Contains('"type":"custom-title"')
-        if (-not ($isUser -or $isAi -or $isCustom)) { continue }
+        # User lines are parsed until BOTH the snippet and the first-message uuid
+        # are known; titles ("last wins") and compact metadata are checked on
+        # every line but only JSON-parsed when their marker is present.
+        $needUser  = (-not $snippet) -or (-not $firstMsgUuid)
+        $isUser    = $needUser -and $line.Contains('"type":"user"')
+        $isAi      = $line.Contains('"type":"ai-title"')
+        $isCustom  = $line.Contains('"type":"custom-title"')
+        $isCompact = $line.Contains('"compactMetadata"')
+        if (-not ($isUser -or $isAi -or $isCustom -or $isCompact)) { continue }
 
         try {
             $obj = $line | ConvertFrom-Json -ErrorAction Stop
@@ -118,22 +125,34 @@ function Get-SessionMetadata {
         if ($isAi     -and $obj.type -eq 'ai-title'     -and $obj.aiTitle)     { $aiTitle     = $obj.aiTitle }
         if ($isCustom -and $obj.type -eq 'custom-title' -and $obj.customTitle) { $customTitle = $obj.customTitle }
 
-        if ($isUser -and -not $snippet -and $obj.type -eq 'user') {
-            $content = $obj.message.content
-            $text = $null
-            if ($content -is [string]) {
-                $text = $content
-            } elseif ($content) {
-                foreach ($c in $content) {
-                    if ($c.type -eq 'text' -and $c.text) { $text = $c.text; break }
-                }
+        if ($isCompact -and $obj.compactMetadata -and $obj.compactMetadata.preservedSegment) {
+            $seg = $obj.compactMetadata.preservedSegment
+            foreach ($k in @('headUuid', 'anchorUuid', 'tailUuid')) {
+                $v = $seg.$k
+                if ($v -and ($compactRefs -notcontains [string]$v)) { $compactRefs.Add([string]$v) }
             }
-            if ($text -and -not $text.StartsWith('<local-command') -and -not $text.StartsWith('<command-name>')) {
-                $text = ($text -replace '\s+', ' ').Trim()
-                if ($text.Length -gt $MaxLength) {
-                    $text = $text.Substring(0, $MaxLength).TrimEnd() + '…'
+        }
+
+        if ($isUser -and $obj.type -eq 'user') {
+            if (-not $firstMsgUuid -and $obj.uuid) { $firstMsgUuid = [string]$obj.uuid }
+
+            if (-not $snippet) {
+                $content = $obj.message.content
+                $text = $null
+                if ($content -is [string]) {
+                    $text = $content
+                } elseif ($content) {
+                    foreach ($c in $content) {
+                        if ($c.type -eq 'text' -and $c.text) { $text = $c.text; break }
+                    }
                 }
-                $snippet = $text
+                if ($text -and -not $text.StartsWith('<local-command') -and -not $text.StartsWith('<command-name>')) {
+                    $text = ($text -replace '\s+', ' ').Trim()
+                    if ($text.Length -gt $MaxLength) {
+                        $text = $text.Substring(0, $MaxLength).TrimEnd() + '…'
+                    }
+                    $snippet = $text
+                }
             }
         }
     }
@@ -142,6 +161,8 @@ function Get-SessionMetadata {
         Snippet         = if ($snippet)     { $snippet }     else { '(no user message found)' }
         Title           = if ($customTitle) { $customTitle } elseif ($aiTitle) { $aiTitle } else { $null }
         HasCustomTitle  = [bool]$customTitle
+        FirstMsgUuid    = $firstMsgUuid
+        CompactRefs     = $compactRefs.ToArray()
     }
 }
 
