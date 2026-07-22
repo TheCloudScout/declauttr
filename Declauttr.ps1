@@ -1841,6 +1841,31 @@ function Test-SessionMatchesQuery {
     return $false
 }
 
+function Get-SessionGroupKey {
+    # Same-title fallback key used to group sibling sessions within a project.
+    # Prefers the (AI/custom) title; falls back to the first user message only
+    # when it is substantial. Returns $null for trivial/empty sessions so the
+    # empty "resume"-style rows never collapse into one bogus family.
+    param(
+        [string]$Title,
+        [string]$Snippet
+    )
+
+    if ($Title -and $Title.Trim()) {
+        return 'T:' + $Title.Trim().ToLower()
+    }
+
+    if ($Snippet -and $Snippet -ne '(no user message found)') {
+        $t = $Snippet.Trim().ToLower().TrimEnd('.', '!', '?', '…')
+        $trivial = @('resume', 'config', 'exit', 'quit', 'clear', 'help', 'init', 'test')
+        if ($t.Length -ge 15 -and ($trivial -notcontains $t)) {
+            return 'S:' + $Snippet.Trim().ToLower()
+        }
+    }
+
+    return $null
+}
+
 function Get-AllSessions {
     param(
         [Parameter(Mandatory)] [string]$Root,
