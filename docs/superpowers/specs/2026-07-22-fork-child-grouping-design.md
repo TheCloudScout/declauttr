@@ -173,8 +173,8 @@ dependency-free dot-source pattern (`. "$PSScriptRoot/../Declauttr.ps1"` +
 - Same-title trio with no UUID/compaction links → one family via `GroupKey`.
 - Trivial sessions (`resume`, `(no user message found)`, empty title) → **not**
   grouped (each stays solo).
-- Mixed set mirroring the real vidara project → the approved shape (one large
-  family + two solo rows).
+- Mixed set mirroring a real multi-session project → the approved shape (one
+  large family + two solo rows).
 - Child ordering: children sorted newest-first under the parent.
 
 `tests/Parse.Tests.ps1` (syntax guard) must still pass. Marquee connector-fixity
@@ -189,6 +189,11 @@ the `∟` grouping and the parent-cascade behaviour.
   parent (or vice versa). Rows keep their parent/child styling as computed on
   the full set, so a child may appear indented without its parent visible. The
   family structure is not recomputed per filter. Acceptable for v1.
+- **Delete path:** families are computed once in `Get-AllSessions` and not
+  recomputed after an in-picker delete. Deleting a parent while leaving a child
+  unchecked leaves that child rendered indented under `∟` with no parent above
+  it until the next run. Cosmetic only (children never cascade against a dead
+  `FamilyId`); same class as the filtered-view simplification above.
 - **Compaction linkage** relies on both files carrying the `compactMetadata`
   block (as observed in real data). If only one side has it, the same-title
   fallback still groups them.
