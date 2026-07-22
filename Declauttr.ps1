@@ -2421,31 +2421,51 @@ function Show-SessionPicker {
                 if ($proj.Length -gt $projColWidth) { $proj = '…' + $proj.Substring($proj.Length - ($projColWidth - 1)) }
                 $prefix  = "$flag $mark  $ts  $($s.SizeFormatted)  $($proj.PadRight($projColWidth))  "
                 $room    = [Math]::Max(10, $width - $prefix.Length - 1)
+
+                # Children carry a fixed 2-column "∟ " connector at the start of
+                # the Title column, lining up under the parent's title. Only the
+                # title text after it scrolls during a marquee.
+                $connector = if ($s.IsChild) { '∟ ' } else { '' }
+                $titleRoom = [Math]::Max(1, $room - $connector.Length)
+
                 $fullDesc = if ($s.Title) { $s.Title } else { $s.Snippet }
-                if ($idx -eq $cursor -and $marqueeOffset -gt 0 -and $fullDesc.Length -gt $room) {
+                if ($idx -eq $cursor -and $marqueeOffset -gt 0 -and $fullDesc.Length -gt $titleRoom) {
                     $gap   = '   •   '
                     $cycle = $fullDesc + $gap
                     $start = $marqueeOffset % $cycle.Length
-                    $sb    = [System.Text.StringBuilder]::new($room)
-                    for ($j = 0; $j -lt $room; $j++) {
+                    $sb    = [System.Text.StringBuilder]::new($titleRoom)
+                    for ($j = 0; $j -lt $titleRoom; $j++) {
                         [void]$sb.Append($cycle[($start + $j) % $cycle.Length])
                     }
-                    $desc = $sb.ToString()
+                    $titleText = $sb.ToString()
                 } else {
-                    $desc = $fullDesc
-                    if ($desc.Length -gt $room) { $desc = $desc.Substring(0, $room - 1) + '…' }
+                    $titleText = $fullDesc
+                    if ($titleText.Length -gt $titleRoom) { $titleText = $titleText.Substring(0, $titleRoom - 1) + '…' }
                 }
-                $line = ($prefix + $desc).PadRight($width)
+
+                $line = ($prefix + $connector + $titleText).PadRight($width)
                 if ($line.Length -gt $width) { $line = $line.Substring(0, $width) }
 
                 if ($idx -eq $cursor) {
+                    # Selected row: single bar, connector included in the bar.
                     Write-Host $line -ForegroundColor White -BackgroundColor DarkBlue
-                } elseif ($s.HasCustomTitle) {
-                    Write-Host $line -ForegroundColor DarkCyan
-                } elseif ($s.Recommended) {
-                    Write-Host $line -ForegroundColor DarkYellow
                 } else {
-                    Write-Host $line
+                    $rowColor = if ($s.HasCustomTitle) { 'DarkCyan' } elseif ($s.Recommended) { 'DarkYellow' } else { $null }
+                    if ($s.IsChild) {
+                        # Split writes so the connector stays DarkGray (a dim
+                        # "branch") while the title keeps the row's own colour.
+                        $pad = $width - $prefix.Length - $connector.Length - $titleText.Length
+                        if ($pad -lt 0) { $pad = 0 }
+                        if ($rowColor) { Write-Host $prefix -NoNewline -ForegroundColor $rowColor }
+                        else           { Write-Host $prefix -NoNewline }
+                        Write-Host $connector -NoNewline -ForegroundColor DarkGray
+                        if ($rowColor) { Write-Host ($titleText + (' ' * $pad)) -ForegroundColor $rowColor }
+                        else           { Write-Host ($titleText + (' ' * $pad)) }
+                    } elseif ($rowColor) {
+                        Write-Host $line -ForegroundColor $rowColor
+                    } else {
+                        Write-Host $line
+                    }
                 }
                 $rowBuffer.Add($line)
             }
