@@ -2454,13 +2454,19 @@ function Show-SessionPicker {
                     if ($s.IsChild) {
                         # Split writes so the connector stays DarkGray (a dim
                         # "branch") while the title keeps the row's own colour.
-                        $pad = $width - $prefix.Length - $connector.Length - $titleText.Length
-                        if ($pad -lt 0) { $pad = 0 }
-                        if ($rowColor) { Write-Host $prefix -NoNewline -ForegroundColor $rowColor }
-                        else           { Write-Host $prefix -NoNewline }
-                        Write-Host $connector -NoNewline -ForegroundColor DarkGray
-                        if ($rowColor) { Write-Host ($titleText + (' ' * $pad)) -ForegroundColor $rowColor }
-                        else           { Write-Host ($titleText + (' ' * $pad)) }
+                        # Slice the already width-clamped $line (the same string
+                        # pushed to $rowBuffer) into its three coloured segments,
+                        # so the printed row can never overflow $width or drift
+                        # from the shadow buffer on a narrow terminal.
+                        $p1   = if ($line.Length -ge $prefix.Length) { $line.Substring(0, $prefix.Length) } else { $line }
+                        $rem  = if ($line.Length -gt $prefix.Length) { $line.Substring($prefix.Length) } else { '' }
+                        $conn = if ($rem.Length -ge $connector.Length) { $rem.Substring(0, $connector.Length) } else { $rem }
+                        $rest = if ($rem.Length -gt $connector.Length) { $rem.Substring($connector.Length) } else { '' }
+                        if ($rowColor) { Write-Host $p1 -NoNewline -ForegroundColor $rowColor }
+                        else           { Write-Host $p1 -NoNewline }
+                        Write-Host $conn -NoNewline -ForegroundColor DarkGray
+                        if ($rowColor) { Write-Host $rest -ForegroundColor $rowColor }
+                        else           { Write-Host $rest }
                     } elseif ($rowColor) {
                         Write-Host $line -ForegroundColor $rowColor
                     } else {
