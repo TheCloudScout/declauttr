@@ -245,6 +245,43 @@ function Format-Wrap {
     return $lines
 }
 
+function Get-SessionMessageText {
+    # Extracts the displayable conversation text from a single raw .jsonl line.
+    # Returns a [pscustomobject] with Role ('USER'|'AI') and Text, or $null when
+    # the line is not a user/assistant message carrying displayable text (tool
+    # calls, tool results, thinking, command markers and pure-metadata lines all
+    # return $null). Both the preview and the content search use this, so the
+    # search corpus is exactly what the preview shows: searching never matches
+    # JSON metadata such as MCP tool names, cwd, or uuids.
+    param([string]$Line)
+
+    if ([string]::IsNullOrWhiteSpace($Line)) { return $null }
+    if (-not ($Line.Contains('"type":"user"') -or $Line.Contains('"type":"assistant"'))) { return $null }
+
+    try { $obj = $Line | ConvertFrom-Json -ErrorAction Stop } catch { return $null }
+
+    $role = $null
+    if     ($obj.type -eq 'user')      { $role = 'USER' }
+    elseif ($obj.type -eq 'assistant') { $role = 'AI'   }
+    if (-not $role) { return $null }
+
+    $content = $obj.message.content
+    $text = $null
+    if ($content -is [string]) {
+        $text = $content
+    } elseif ($content) {
+        $parts = @()
+        foreach ($c in $content) {
+            if ($c.type -eq 'text' -and $c.text) { $parts += $c.text }
+        }
+        if ($parts.Count -gt 0) { $text = $parts -join "`n" }
+    }
+    if (-not $text) { return $null }
+    if ($text.StartsWith('<local-command') -or $text.StartsWith('<command-name>')) { return $null }
+
+    return [pscustomobject]@{ Role = $role; Text = $text }
+}
+
 function Get-SessionPreviewContent {
     param(
         [Parameter(Mandatory)] [object]$Session,
@@ -273,32 +310,10 @@ function Get-SessionPreviewContent {
     $count = 0
     try {
         foreach ($line in [System.IO.File]::ReadLines($Session.Path)) {
-            if ([string]::IsNullOrWhiteSpace($line)) { continue }
-
-            $isUser   = $line.Contains('"type":"user"')
-            $isAssist = $line.Contains('"type":"assistant"')
-            if (-not ($isUser -or $isAssist)) { continue }
-
-            try { $obj = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
-
-            $role = $null
-            if     ($obj.type -eq 'user')      { $role = 'USER' }
-            elseif ($obj.type -eq 'assistant') { $role = 'AI'   }
-            if (-not $role) { continue }
-
-            $content = $obj.message.content
-            $text = $null
-            if ($content -is [string]) {
-                $text = $content
-            } elseif ($content) {
-                $parts = @()
-                foreach ($c in $content) {
-                    if ($c.type -eq 'text' -and $c.text) { $parts += $c.text }
-                }
-                if ($parts.Count -gt 0) { $text = $parts -join "`n" }
-            }
-            if (-not $text) { continue }
-            if ($text.StartsWith('<local-command') -or $text.StartsWith('<command-name>')) { continue }
+            $msg = Get-SessionMessageText -Line $line
+            if (-not $msg) { continue }
+            $role = $msg.Role
+            $text = $msg.Text
 
             if ($count -gt 0) { $body.Add('') }
             $body.Add("${role}:")
@@ -1851,12 +1866,17 @@ function Test-RecommendRemoval {
 }
 
 function Test-SessionMatchesQuery {
-    # Stream the .jsonl line-by-line and bail at the first match. Operates on
-    # the raw on-disk bytes so it sees both user messages and assistant
-    # replies without parsing JSON.
+    # Match the session's title and then stream the .jsonl line-by-line, bailing
+    # at the first hit. Matches only the resolved title and the user/assistant
+    # conversation text (via Get-SessionMessageText), so the search corpus is
+    # exactly what the preview shows -- title in the header, prompts and replies
+    # in the body -- and never includes JSON metadata such as tool names, cwd, or
+    # uuids. $Title is the already-resolved session title (custom wins over AI);
+    # pass it so we don't reparse the title lines here.
     param(
         [Parameter(Mandatory)] [string]$Path,
         [Parameter(Mandatory)] [string]$Query,
+        [string]$Title,
         [switch]$CaseSensitive
     )
     if ([string]::IsNullOrEmpty($Query)) { return $true }
@@ -1865,9 +1885,12 @@ function Test-SessionMatchesQuery {
     } else {
         [System.StringComparison]::OrdinalIgnoreCase
     }
+    if ($Title -and $Title.IndexOf($Query, $cmp) -ge 0) { return $true }
     try {
         foreach ($line in [System.IO.File]::ReadLines($Path)) {
-            if ($line.IndexOf($Query, $cmp) -ge 0) { return $true }
+            $msg = Get-SessionMessageText -Line $line
+            if (-not $msg) { continue }
+            if ($msg.Text.IndexOf($Query, $cmp) -ge 0) { return $true }
         }
     } catch { return $false }
     return $false
@@ -2271,7 +2294,7 @@ function Show-SessionPicker {
                                 $scanMsg = " Searching $($Sessions.Count) sessions for `"$q`"... "
                                 if ($scanMsg.Length -gt $width) { $scanMsg = $scanMsg.Substring(0, $width) }
                                 Write-Host ($scanMsg.PadRight($width)) -ForegroundColor Black -BackgroundColor Yellow
-                                $activeSessions      = @($Sessions | Where-Object { Test-SessionMatchesQuery -Path $_.Path -Query $q -CaseSensitive:$cs })
+                                $activeSessions      = @($Sessions | Where-Object { Test-SessionMatchesQuery -Path $_.Path -Query $q -Title $_.Title -CaseSensitive:$cs })
                                 $searchQuery         = $q
                                 $searchCaseSensitive = $cs
                                 $cursor = 0; $top = 0
