@@ -2004,10 +2004,14 @@ function Get-AllSessions {
     foreach ($proj in $projects) {
         $files = Get-ChildItem -Path $proj.FullName -Filter '*.jsonl' -File |
                  Sort-Object LastWriteTime -Descending
+
+        # Build this project's sessions, then group them into families. Grouping
+        # is per-project because a family never spans projects.
+        $projSessions = [System.Collections.Generic.List[object]]::new()
         foreach ($f in $files) {
             $meta      = Get-SessionMetadata -Path $f.FullName -MaxLength $SnippetMax
             $recommend = Test-RecommendRemoval -SizeBytes $f.Length -Snippet $meta.Snippet
-            $result.Add([pscustomobject]@{
+            $projSessions.Add([pscustomobject]@{
                 Project        = $proj.Name
                 Path           = $f.FullName
                 Uuid           = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
@@ -2019,8 +2023,17 @@ function Get-AllSessions {
                 Snippet        = $meta.Snippet
                 Recommended    = $recommend
                 Checked        = $recommend
+                FirstMsgUuid   = $meta.FirstMsgUuid
+                CompactRefs    = $meta.CompactRefs
+                GroupKey       = Get-SessionGroupKey -Title $meta.Title -Snippet $meta.Snippet
+                FamilyId       = $null
+                IsParent       = $false
+                IsChild        = $false
             })
         }
+
+        $ordered = Group-SessionsIntoFamilies -Sessions $projSessions
+        foreach ($s in $ordered) { $result.Add($s) }
     }
     # Comma prefix prevents PowerShell from enumerating the list into an
     # object[] (which is fixed-size and would break later .RemoveAt calls in
